@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "crates/traffic-core",
+    "crates/traffic-server",
+    "crates/traffic-web",
+]
+resolver = "2"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
