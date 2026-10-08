@@ -25,6 +25,15 @@ cd ../..
 cargo run -p traffic-server
 ```
 
+For protocol diagnostics (never enabled in production), add the server flag:
+
+```sh
+cargo run -p traffic-server -- --trace-protocol
+```
+
+It logs submitted deltas and accepted event sequences, but never cookies or
+session identifiers.
+
 Open `http://127.0.0.1:3000` in two distinct Firefox profiles. Distinct
 profiles are important: they maintain separate anonymous session cookies while
 using the same local origin.

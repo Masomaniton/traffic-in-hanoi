@@ -3,7 +3,7 @@ mod client {
     use gloo_net::http::Request;
     use leptos::prelude::*;
     use serde::Deserialize;
-    use traffic_core::{Card, Game, GameDelta, Operation, Owner, Support};
+    use traffic_core::{Card, CardStatus, Game, GameDelta, Operation, Owner, Support};
     use traffic_network::{ClientMessage, ServerMessage};
     use wasm_bindgen::{JsCast, closure::Closure};
     use wasm_bindgen_futures::spawn_local;
@@ -27,6 +27,7 @@ mod client {
         );
         let state = RwSignal::new(None::<Game>);
         let socket = RwSignal::new(None::<WebSocket>);
+        let selected = RwSignal::new(None::<Card>);
         let card = RwSignal::new("H1".to_owned());
         let target = RwSignal::new("base 0 1".to_owned());
 
@@ -128,7 +129,8 @@ mod client {
                     <button on:click=move |_| connect(code.get().to_uppercase())>"Connect"</button>
                 </section>
                 <section>
-                    <pre>{move || state.get().map(render).unwrap_or_else(|| "No game state.".to_owned())}</pre>
+                    <p>{move || selected.get().map(|card| format!("Selected {card}; click a square or card support.")).unwrap_or_else(|| "Click idle to root, evicted to select, intended to fulfil.".to_owned())}</p>
+                    {move || state.get().map(|game| visual_board(game, selected, state, socket, notice)).unwrap_or_else(|| view! { <p>"No game state."</p> }.into_any())}
                 </section>
                 <section>
                     <input prop:value=move || card.get() on:input=move |event| card.set(event_target_value(&event)) />
@@ -141,6 +143,82 @@ mod client {
                     <p>"Target format: base x y, or card H1."</p>
                 </section>
             </main>
+        }
+    }
+
+    fn send(
+        state: RwSignal<Option<Game>>,
+        socket: RwSignal<Option<WebSocket>>,
+        notice: RwSignal<String>,
+        delta: GameDelta,
+    ) {
+        let Some(game) = state.get() else {
+            notice.set("Join a room first.".to_owned());
+            return;
+        };
+        let Some(ws) = socket.get() else {
+            notice.set("WebSocket is not connected.".to_owned());
+            return;
+        };
+        let request = ClientMessage::SubmitDelta {
+            known_sequence: game.sequence(),
+            delta,
+        };
+        if let Ok(text) = serde_json::to_string(&request) {
+            let _ = ws.send_with_str(&text);
+        }
+    }
+
+    fn visual_board(
+        game: Game,
+        selected: RwSignal<Option<Card>>,
+        state: RwSignal<Option<Game>>,
+        socket: RwSignal<Option<WebSocket>>,
+        notice: RwSignal<String>,
+    ) -> AnyView {
+        let columns = game
+            .layout()
+            .squares()
+            .map(|square| square.column)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let rows = game
+            .layout()
+            .squares()
+            .map(|square| square.row)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let blocked = game.blocked().is_some();
+        let squares = game.layout().squares().map(|square| {
+            let cards = game.board().pile(square).into_iter().enumerate().map(|(index, card)| {
+                let status = game.board().card_state(card).map(|state| state.status.clone()).unwrap_or(CardStatus::Idle);
+                let class = format!("playing-card {} {}{}", if card.owner == Owner::Heart { "heart" } else { "spade" }, status_name(&status), if selected.get() == Some(card) { " selected" } else { "" });
+                view! { <button class=class style=format!("left:{}px;z-index:{}", index * 18, index + 1) on:click=move |event: web_sys::MouseEvent| {
+                    event.stop_propagation();
+                    if let Some(mover) = selected.get() {
+                        selected.set(None);
+                        send(state, socket, notice, GameDelta::Operation(Operation::Intention { card: mover, target: Support::Card(card) }));
+                    } else {
+                        match status {
+                            CardStatus::Idle => send(state, socket, notice, GameDelta::Operation(Operation::Root(card))),
+                            CardStatus::Evicted => selected.set(Some(card)),
+                            CardStatus::Intended(_) => send(state, socket, notice, GameDelta::Operation(Operation::Fulfilment(card))),
+                        }
+                    }
+                }><span>{format!("{}{}", if card.owner == Owner::Heart { "♥" } else { "♠" }, card.rank.display())}</span></button> }
+            }).collect_view();
+            view! { <div class="board-square" style=format!("grid-column:{};grid-row:{}", square.column + 1, square.row + 1) on:click=move |_| if let Some(mover) = selected.get() { selected.set(None); send(state, socket, notice, GameDelta::Operation(Operation::Intention { card: mover, target: Support::Base(square) })); }><small>{format!("{},{}", square.column, square.row)}</small><div class="pile">{cards}</div></div> }
+        }).collect_view();
+        view! { <div class=if blocked { "board blocked" } else { "board" } style=format!("grid-template-columns:repeat({},minmax(7rem,1fr));grid-template-rows:repeat({},7rem)", columns, rows)>{squares}</div> }.into_any()
+    }
+
+    fn status_name(status: &CardStatus) -> &'static str {
+        match status {
+            CardStatus::Idle => "idle",
+            CardStatus::Evicted => "evicted",
+            CardStatus::Intended(_) => "intended",
         }
     }
 
@@ -168,36 +246,6 @@ mod client {
             ["card", card] => Ok(Support::Card(parse_card(card, game)?)),
             _ => Err(()),
         }
-    }
-    fn render(game: Game) -> String {
-        let mut text = format!(
-            "sequence {} | active {} | active card {:?}\n",
-            game.sequence().value(),
-            game.active_player(),
-            game.active_card()
-        );
-        for square in game.layout().squares() {
-            text.push_str(&format!(
-                "{square}: {}\n",
-                game.board()
-                    .pile(square)
-                    .into_iter()
-                    .map(|card| card.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            ));
-        }
-        if let Some(blocked) = game.blocked() {
-            text.push_str(&format!(
-                "DEAD END: {}\n",
-                blocked
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            ));
-        }
-        text
     }
 }
 

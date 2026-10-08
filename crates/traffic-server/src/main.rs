@@ -23,6 +23,7 @@ type SessionId = String;
 #[derive(Clone)]
 struct AppState {
     rooms: Arc<Mutex<HashMap<String, RoomHandle>>>,
+    trace_protocol: bool,
 }
 
 #[derive(Clone)]
@@ -56,6 +57,7 @@ struct RoomResponse {
 async fn main() {
     let state = AppState {
         rooms: Arc::new(Mutex::new(HashMap::new())),
+        trace_protocol: std::env::args().any(|argument| argument == "--trace-protocol"),
     };
     let app = Router::new()
         .route("/api/rooms", post(create_room))
@@ -77,7 +79,7 @@ async fn create_room(
 ) -> (HeaderMap, Json<RoomResponse>) {
     let (session, cookie) = session(&headers);
     let code = room_code();
-    let handle = spawn_room(session);
+    let handle = spawn_room(session, state.trace_protocol);
     state.rooms.lock().await.insert(code.clone(), handle);
     (
         cookie_header(cookie),
@@ -166,7 +168,7 @@ async fn serve_socket(socket: WebSocket, handle: RoomHandle, session: SessionId)
     }
 }
 
-fn spawn_room(heart: SessionId) -> RoomHandle {
+fn spawn_room(heart: SessionId, trace_protocol: bool) -> RoomHandle {
     let (sender, mut receiver) = mpsc::channel(64);
     tokio::spawn(async move {
         let created = GameCreated::new(Layout::standard(5).expect("standard layout is valid"));
@@ -209,6 +211,9 @@ fn spawn_room(heart: SessionId) -> RoomHandle {
                                 created: created.clone(),
                                 events: game.events().to_vec(),
                             });
+                            if trace_protocol {
+                                eprintln!("→ replay bootstrap");
+                            }
                         } else {
                             let _ = outgoing.send(ServerMessage::Rejected {
                                 current_sequence: game.sequence(),
@@ -225,6 +230,9 @@ fn spawn_room(heart: SessionId) -> RoomHandle {
                                 .cloned()
                                 .collect();
                             let _ = outgoing.send(ServerMessage::Events { events });
+                            if trace_protocol {
+                                eprintln!("→ catch-up after {}", sequence.value());
+                            }
                         } else {
                             let _ = outgoing.send(ServerMessage::Rejected {
                                 current_sequence: game.sequence(),
@@ -236,6 +244,9 @@ fn spawn_room(heart: SessionId) -> RoomHandle {
                         known_sequence,
                         delta,
                     } => {
+                        if trace_protocol {
+                            eprintln!("← delta at {}: {delta:?}", known_sequence.value());
+                        }
                         let owner = if session == heart {
                             Some(Owner::Heart)
                         } else if spade.as_ref() == Some(&session) {
@@ -261,6 +272,9 @@ fn spawn_room(heart: SessionId) -> RoomHandle {
                             };
                             subscribers
                                 .retain(|subscriber| subscriber.send(update.clone()).is_ok());
+                            if trace_protocol {
+                                eprintln!("→ accepted event {}", game.sequence().value());
+                            }
                         } else {
                             let _ = outgoing.send(ServerMessage::Rejected {
                                 current_sequence: game.sequence(),
