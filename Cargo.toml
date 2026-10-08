@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/traffic-core",
+    "crates/traffic-cli",
     "crates/traffic-server",
     "crates/traffic-web",
 ]
