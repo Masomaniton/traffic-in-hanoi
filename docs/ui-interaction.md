@@ -25,6 +25,8 @@ invalid history position. Only Undo is available while blocked.
 Scope keyboard controls to the focused game board and prevent browser-default
 navigation where necessary.
 
+These controls are specified but are not yet implemented in the local demo.
+
 | Key | Action |
 | --- | --- |
 | Backspace | Undo the final batch. |

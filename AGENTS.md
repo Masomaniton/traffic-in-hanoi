@@ -39,6 +39,15 @@ Persist an append-only game event log. Traffic in Hanoi has public board informa
 
 Treat an in-progress turn as a server-authoritative, reversible transaction. The server validates each appended history entry incrementally and derives eviction entries one at a time. A batch stops at its first invalid history position and is then blocked; no later operation is accepted until Undo removes that final batch. Do not treat the final turn submission as the sole rules-validation point. The precise mechanics are specified in `docs/rules.md` and `docs/implementation.md`.
 
+## Current local demo
+
+The local demo is intentionally in-memory: it creates private two-seat rooms,
+uses separate anonymous cookie sessions, and loses all rooms on server restart.
+Run instructions are in `docs/local-demo.md`. It serves a Trunk-built WASM
+bundle from `crates/traffic-server/static/`, which is generated and ignored.
+Use `cargo run -p traffic-server -- --trace-protocol` only for local protocol
+diagnostics; it must never log cookies or session identifiers.
+
 ## Suggested dependencies
 
 - `traffic-core`: `serde`, `thiserror`. Do not add randomness unless a future game variant genuinely requires it; any such randomness must be explicitly seeded and preserved in game metadata.

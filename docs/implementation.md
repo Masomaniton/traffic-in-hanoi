@@ -106,9 +106,11 @@ accepted game deltas. A delta is an operation or the Undo control:
 GameDelta = Operation(Root | Intention | Fulfilment | End) | Undo
 ```
 
-`GameCreated` is the immutable sequence-zero record. It provides the layout,
-rank count, and player assignment. Each later `GameEvent` has a monotonically
-increasing unsigned `GameSequence`, its actor, and one accepted `GameDelta`.
+`GameCreated` is immutable sequence-zero setup data. It provides the layout and
+rank count. Each later `GameEvent` has a monotonically increasing unsigned
+`GameSequence` and one accepted `GameDelta`. The acting owner is derivable from
+the replay state before the event; authentication and audit metadata belong to
+the server, not the core replay record.
 Automatic evictions are derived by `traffic-core`; clients never submit or
 receive them as separate network deltas.
 

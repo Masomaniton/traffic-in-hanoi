@@ -45,9 +45,9 @@ using the same local origin.
 2. In Spade's profile, paste the room code, click **Join room (Spade)**, then
    click **Connect**. **Connect alone does not claim the Spade seat.**
 3. Both profiles receive the same replay bootstrap and show the live board.
-4. Use a card value such as `H1` and the controls to root, intend, fulfil, end,
-   or undo. An intention target is either `base x y` (for example `base 0 1`)
-   or `card H1`.
+4. Click an idle card to root it. Click an evicted card to select it, then
+   click an adjacent square or card support to intend. Click an intended card
+   to fulfil it. Use **End turn** and **Undo** for their respective deltas.
 
 The server broadcasts accepted deltas to both profiles. The browser replays
 them through `traffic-core`; automatic evictions and blocked batches are never

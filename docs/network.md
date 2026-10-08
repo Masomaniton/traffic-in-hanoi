@@ -6,11 +6,14 @@ does not contain WebSocket code, HTTP code, authentication, or game rules.
 
 ## Canonical log
 
-The server persistently owns one append-only sequence of `GameEvent` values per
-game. `GameCreated` is separate immutable setup data. Every accepted delta,
+The production server persistently owns one append-only sequence of `GameEvent`
+values per game. `GameCreated` is separate immutable setup data. Every accepted delta,
 including `Undo` and a delta that creates a blocked batch, becomes exactly one
 event. Derived evictions do not become network events because replay derives
 them deterministically.
+
+The local demo uses the same model in memory only; it intentionally loses rooms
+and logs when the process restarts.
 
 ## Synchronization modes
 
