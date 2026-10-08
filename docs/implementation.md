@@ -97,19 +97,46 @@ Nothing in an open turn is permanent. Undo removes the final batch, whether it
 is blocked or valid. A valid `End` seals the turn into an immutable turn record
 for match replay; an invalid `End` is merely a blocked final batch.
 
-## 5. Networking
+## 5. Networking and replay
 
-Client commands are operations or the Undo control:
+The canonical network and persistence record is an append-only sequence of
+accepted game deltas. A delta is an operation or the Undo control:
 
 ```text
-Root(card) | Intention(card, support) | Fulfilment(card, support) | End | Undo
+GameDelta = Operation(Root | Intention | Fulfilment | End) | Undo
 ```
 
-The server validates commands authoritatively and broadcasts ordered updates
-containing accepted entries, batch status, and validation reasons. Clients do
-not submit evictions directly.
+`GameCreated` is the immutable sequence-zero record. It provides the layout,
+rank count, and player assignment. Each later `GameEvent` has a monotonically
+increasing unsigned `GameSequence`, its actor, and one accepted `GameDelta`.
+Automatic evictions are derived by `traffic-core`; clients never submit or
+receive them as separate network deltas.
 
-Updates are provisional while a turn is open. Reconnect uses a turn-start
-snapshot plus the current ordered history, which deterministically rebuilds
-batches and blocked status.
+The server validates commands authoritatively and broadcasts accepted events in
+sequence order. Rejected transport commands—such as unauthorized commands or
+commands based on a stale sequence—are not game events. A blocked attempt is a
+valid game event because it adds a blocked batch, and an Undo is a valid game
+event because it removes one.
 
+Every client retains the complete local event history. A fresh client receives
+sequence zero and all later events; a reconnecting client requests events after
+its highest contiguous sequence. Replaying from `GameCreated` reconstructs
+the same complete state, including every automatic eviction, blocked batch, and
+undo. Server-side checkpoints may be added later solely as a replay-speed
+optimization; clients need not receive snapshots.
+
+The server uses an actor to serialize all commands for a game. A client submits
+the sequence it has applied along with a prospective delta. This is not an
+attempt to compensate for TCP ordering: WebSockets already provide ordered,
+reliable delivery on an active connection. It prevents actions made against a
+stale state from being interpreted against a newer board after reconnects,
+retries, or concurrent player activity.
+
+## 6. Local history navigation
+
+`HistoryCursor` is client-only presentation state and is never transmitted. It
+points to a **batch boundary**, not an individual history entry. Left/right
+navigation therefore moves before or after one player operation together with
+all its derived evictions—the same granularity as Undo. Up/down navigation
+moves between turn boundaries. Gameplay input is available only at the current
+live boundary.

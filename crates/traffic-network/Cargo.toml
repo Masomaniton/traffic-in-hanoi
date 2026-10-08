@@ -1,0 +1,8 @@
+[package]
+name = "traffic-network"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { workspace = true }
+traffic-core = { path = "../traffic-core" }

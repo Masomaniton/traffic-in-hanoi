@@ -2,6 +2,7 @@
 members = [
     "crates/traffic-core",
     "crates/traffic-cli",
+    "crates/traffic-network",
     "crates/traffic-server",
     "crates/traffic-web",
 ]

@@ -76,6 +76,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "traffic-network"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "traffic-core",
+]
+
+[[package]]
 name = "traffic-server"
 version = "0.1.0"
 

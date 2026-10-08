@@ -164,14 +164,8 @@ fn main() {
                 }
                 "undo" => {
                     let game = game.as_mut().ok_or_else(|| err("run `begin` first"))?;
-                    println!(
-                        "{}",
-                        if game.undo() {
-                            "undid final batch"
-                        } else {
-                            "nothing to undo"
-                        }
-                    );
+                    game.undo()?;
+                    println!("undid final batch");
                     Ok(())
                 }
                 _ => Err(err("unknown command; type `help`")),

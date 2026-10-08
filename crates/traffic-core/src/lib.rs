@@ -278,7 +278,7 @@ impl Board {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Operation {
     Root(Card),
     Intention { card: Card, target: Support },
@@ -286,13 +286,65 @@ pub enum Operation {
     End,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum HistoryEntry {
     Root(Card),
     Intention { card: Card, target: Support },
     Fulfilment { card: Card, target: Support },
     End,
     Eviction(Card),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum GameDelta {
+    Operation(Operation),
+    Undo,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct GameSequence(u64);
+
+impl GameSequence {
+    pub const INITIAL: Self = Self(0);
+
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GameCreated {
+    layout: Layout,
+}
+
+impl GameCreated {
+    pub const fn new(layout: Layout) -> Self {
+        Self { layout }
+    }
+
+    pub const fn layout(&self) -> &Layout {
+        &self.layout
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GameEvent {
+    sequence: GameSequence,
+    delta: GameDelta,
+}
+
+impl GameEvent {
+    pub const fn new(sequence: GameSequence, delta: GameDelta) -> Self {
+        Self { sequence, delta }
+    }
+
+    pub const fn sequence(&self) -> GameSequence {
+        self.sequence
+    }
+
+    pub const fn delta(&self) -> &GameDelta {
+        &self.delta
+    }
 }
 
 impl fmt::Display for HistoryEntry {
@@ -384,7 +436,10 @@ pub enum ApplyResult {
 
 #[derive(Clone, Debug)]
 pub struct Game {
+    created: GameCreated,
     layout: Layout,
+    sequence: GameSequence,
+    events: Vec<GameEvent>,
     board: Board,
     active_player: Owner,
     active_card: Option<Card>,
@@ -393,8 +448,17 @@ pub struct Game {
     winner: Option<Owner>,
 }
 
+/// The complete locally replayed game state. `Game` remains an alias while the
+/// CLI migrates to the replay-oriented name.
+pub type GameState = Game;
+
 impl Game {
     pub fn new(layout: Layout) -> Self {
+        Self::from_created(GameCreated::new(layout))
+    }
+
+    pub fn from_created(created: GameCreated) -> Self {
+        let layout = created.layout.clone();
         let mut cards = BTreeMap::new();
         for owner in [Owner::Heart, Owner::Spade] {
             let mut support = Support::Base(layout.start(owner));
@@ -414,7 +478,10 @@ impl Game {
             }
         }
         Self {
+            created,
             layout,
+            sequence: GameSequence::INITIAL,
+            events: Vec::new(),
             board: Board { cards },
             active_player: Owner::Heart,
             active_card: None,
@@ -425,6 +492,15 @@ impl Game {
     }
     pub fn layout(&self) -> &Layout {
         &self.layout
+    }
+    pub const fn created(&self) -> &GameCreated {
+        &self.created
+    }
+    pub const fn sequence(&self) -> GameSequence {
+        self.sequence
+    }
+    pub fn events(&self) -> &[GameEvent] {
+        &self.events
     }
     pub fn board(&self) -> &Board {
         &self.board
@@ -454,6 +530,39 @@ impl Game {
     }
 
     pub fn apply(&mut self, operation: Operation) -> Result<ApplyResult, CoreError> {
+        self.apply_delta(GameDelta::Operation(operation))
+            .map(|(_, outcome)| outcome)
+    }
+
+    pub fn apply_delta(&mut self, delta: GameDelta) -> Result<(GameEvent, ApplyResult), CoreError> {
+        let sequence = self.next_sequence()?;
+        let outcome = self.apply_delta_inner(delta.clone())?;
+        let event = GameEvent::new(sequence, delta);
+        self.sequence = sequence;
+        self.events.push(event.clone());
+        Ok((event, outcome))
+    }
+
+    pub fn apply_event(&mut self, event: GameEvent) -> Result<ApplyResult, CoreError> {
+        if event.sequence != self.next_sequence()? {
+            return Err(CoreError::new(
+                "game event sequence is not the next sequence",
+            ));
+        }
+        let outcome = self.apply_delta_inner(event.delta.clone())?;
+        self.sequence = event.sequence;
+        self.events.push(event);
+        Ok(outcome)
+    }
+
+    fn apply_delta_inner(&mut self, delta: GameDelta) -> Result<ApplyResult, CoreError> {
+        match delta {
+            GameDelta::Operation(operation) => self.apply_operation(operation),
+            GameDelta::Undo => self.undo_batch(),
+        }
+    }
+
+    fn apply_operation(&mut self, operation: Operation) -> Result<ApplyResult, CoreError> {
         if self.winner.is_some() {
             return Err(CoreError::new("game has ended"));
         }
@@ -502,13 +611,26 @@ impl Game {
         Ok(ApplyResult::Applied)
     }
 
-    pub fn undo(&mut self) -> bool {
+    pub fn undo(&mut self) -> Result<ApplyResult, CoreError> {
+        self.apply_delta(GameDelta::Undo)
+            .map(|(_, outcome)| outcome)
+    }
+
+    fn undo_batch(&mut self) -> Result<ApplyResult, CoreError> {
         let Some(batch) = self.batches.pop() else {
-            return false;
+            return Err(CoreError::new("there is no batch to undo"));
         };
         self.board = batch.before.board;
         self.active_card = batch.before.active_card;
-        true
+        Ok(ApplyResult::Applied)
+    }
+
+    fn next_sequence(&self) -> Result<GameSequence, CoreError> {
+        self.sequence
+            .0
+            .checked_add(1)
+            .map(GameSequence)
+            .ok_or_else(|| CoreError::new("game event sequence overflow"))
     }
 
     fn apply_root(&mut self, card: Card, batch: &mut Batch) -> Result<Vec<Violation>, CoreError> {
@@ -751,7 +873,7 @@ mod tests {
             game.apply(Operation::Root(card)).unwrap(),
             ApplyResult::Applied
         ));
-        assert!(game.undo());
+        assert!(matches!(game.undo().unwrap(), ApplyResult::Applied));
         assert!(game.history().is_empty());
     }
 
@@ -774,7 +896,7 @@ mod tests {
             CardStatus::Evicted
         );
 
-        assert!(game.undo());
+        assert!(matches!(game.undo().unwrap(), ApplyResult::Applied));
         assert_eq!(
             game.board.card_state(buried).unwrap().status,
             CardStatus::Idle
@@ -809,7 +931,30 @@ mod tests {
             game.apply(Operation::End).unwrap(),
             ApplyResult::Blocked(violations) if violations == vec![Violation::PendingCards]
         ));
-        assert!(game.undo());
+        assert!(matches!(game.undo().unwrap(), ApplyResult::Applied));
         assert_eq!(game.history(), vec![HistoryEntry::Root(card)]);
+    }
+
+    #[test]
+    fn events_replay_to_the_same_state_including_undo() {
+        let created = GameCreated::new(Layout::standard(2).unwrap());
+        let card = Card::from_display(Owner::Heart, 1, 2).unwrap();
+        let mut original = Game::from_created(created.clone());
+        original
+            .apply_delta(GameDelta::Operation(Operation::Root(card)))
+            .unwrap();
+        original.apply_delta(GameDelta::Undo).unwrap();
+
+        let events = original.events().to_vec();
+        let mut replay = Game::from_created(created);
+        for event in events {
+            replay.apply_event(event).unwrap();
+        }
+
+        assert_eq!(original.sequence(), replay.sequence());
+        assert_eq!(original.board, replay.board);
+        assert_eq!(original.active_player(), replay.active_player());
+        assert_eq!(original.active_card(), replay.active_card());
+        assert_eq!(original.history(), replay.history());
     }
 }
