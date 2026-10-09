@@ -1,71 +1,14 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::io::{self, Write};
-
-use traffic_core::{
-    ApplyResult, Card, CardStatus, CoreError, Game, Layout, Operation, Owner, Square, Support,
+use std::{
+    collections::BTreeMap,
+    io::{self, Write},
 };
 
-struct Draft {
-    rank_count: u16,
-    squares: BTreeSet<Square>,
-    starts: BTreeMap<Owner, Square>,
-    finishes: BTreeMap<Owner, Square>,
-}
+mod draft;
 
-impl Draft {
-    fn standard(rank_count: u16) -> Self {
-        let layout = Layout::standard(rank_count).expect("standard layout is valid");
-        Self {
-            rank_count,
-            squares: layout.squares().collect(),
-            starts: BTreeMap::from([
-                (Owner::Heart, layout.start(Owner::Heart)),
-                (Owner::Spade, layout.start(Owner::Spade)),
-            ]),
-            finishes: BTreeMap::from([
-                (Owner::Heart, layout.finish(Owner::Heart)),
-                (Owner::Spade, layout.finish(Owner::Spade)),
-            ]),
-        }
-    }
-
-    fn empty(rank_count: u16) -> Self {
-        Self {
-            rank_count,
-            squares: BTreeSet::new(),
-            starts: BTreeMap::new(),
-            finishes: BTreeMap::new(),
-        }
-    }
-
-    fn build(&self) -> Result<Layout, CoreError> {
-        Layout::new(
-            self.rank_count,
-            self.squares.clone(),
-            self.starts.clone(),
-            self.finishes.clone(),
-        )
-    }
-
-    fn print(&self) {
-        println!("layout draft: {} ranks", self.rank_count);
-        println!(
-            "squares: {}",
-            self.squares
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
-        for owner in [Owner::Heart, Owner::Spade] {
-            println!(
-                "{owner}: start {:?}, finish {:?}",
-                self.starts.get(&owner),
-                self.finishes.get(&owner)
-            );
-        }
-    }
-}
+use draft::Draft;
+use traffic_core::{
+    ApplyResult, Card, CardStatus, CoreError, Game, Operation, Owner, Square, Support,
+};
 
 fn main() {
     println!("Traffic in Hanoi CLI — type `help` for commands.");

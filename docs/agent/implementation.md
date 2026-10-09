@@ -8,6 +8,13 @@ This document specifies the online implementation of the declarative rules in
 Use a normalized orthogonal layout; do not support arbitrary graph edges in the
 first version.
 
+The core source is intentionally divided by responsibility: `board.rs` holds
+the direct-support representation, `game.rs` owns replay lifecycle and event
+sequencing, `rules.rs` owns deterministic transitions and validation,
+`history.rs` owns cursor navigation, and `violation.rs` owns blocked-state
+reporting. `lib.rs` re-exports the public API; `tests.rs` holds core regression
+tests.
+
 ```rust
 pub struct Square {
     pub column: u16,

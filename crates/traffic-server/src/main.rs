@@ -1,12 +1,14 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
+mod session;
+
 use axum::{
     Json, Router,
     extract::{
         Path, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{HeaderMap, HeaderValue, StatusCode, header::SET_COOKIE},
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
 };
@@ -18,7 +20,7 @@ use traffic_core::{Game, GameCreated, Layout, Owner};
 use traffic_network::{ClientMessage, RejectionReason, ServerMessage};
 use uuid::Uuid;
 
-type SessionId = String;
+use session::SessionId;
 
 #[derive(Clone)]
 struct AppState {
@@ -77,12 +79,12 @@ async fn create_room(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> (HeaderMap, Json<RoomResponse>) {
-    let (session, cookie) = session(&headers);
+    let (session, cookie) = session::establish(&headers);
     let code = room_code();
     let handle = spawn_room(session, state.trace_protocol);
     state.rooms.lock().await.insert(code.clone(), handle);
     (
-        cookie_header(cookie),
+        session::cookie_header(cookie),
         Json(RoomResponse {
             code,
             owner: Owner::Heart,
@@ -95,7 +97,7 @@ async fn join_room(
     Path(code): Path<String>,
     headers: HeaderMap,
 ) -> Result<(HeaderMap, Json<RoomResponse>), (StatusCode, String)> {
-    let (session, cookie) = session(&headers);
+    let (session, cookie) = session::establish(&headers);
     let handle = state
         .rooms
         .lock()
@@ -113,7 +115,10 @@ async fn join_room(
         .await
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "room stopped".to_owned()))?
         .map_err(|message| (StatusCode::CONFLICT, message))?;
-    Ok((cookie_header(cookie), Json(RoomResponse { code, owner })))
+    Ok((
+        session::cookie_header(cookie),
+        Json(RoomResponse { code, owner }),
+    ))
 }
 
 async fn websocket(
@@ -122,7 +127,7 @@ async fn websocket(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let Some(session) = existing_session(&headers) else {
+    let Some(session) = session::existing(&headers) else {
         return Err(StatusCode::UNAUTHORIZED);
     };
     let handle = state
@@ -291,39 +296,6 @@ fn spawn_room(heart: SessionId, trace_protocol: bool) -> RoomHandle {
         }
     });
     RoomHandle { sender }
-}
-
-fn existing_session(headers: &HeaderMap) -> Option<SessionId> {
-    headers
-        .get("cookie")?
-        .to_str()
-        .ok()?
-        .split(';')
-        .find_map(|part| {
-            part.trim()
-                .strip_prefix("traffic_session=")
-                .map(ToOwned::to_owned)
-        })
-}
-
-fn session(headers: &HeaderMap) -> (SessionId, Option<HeaderValue>) {
-    if let Some(existing) = existing_session(headers) {
-        return (existing, None);
-    }
-    let value = Uuid::new_v4().to_string();
-    let cookie = HeaderValue::from_str(&format!(
-        "traffic_session={value}; Path=/; HttpOnly; SameSite=Lax"
-    ))
-    .expect("valid cookie");
-    (value, Some(cookie))
-}
-
-fn cookie_header(cookie: Option<HeaderValue>) -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    if let Some(cookie) = cookie {
-        headers.insert(SET_COOKIE, cookie);
-    }
-    headers
 }
 
 fn room_code() -> String {

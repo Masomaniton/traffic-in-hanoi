@@ -3,6 +3,22 @@
 `traffic-core` is the deterministic Rust rules engine. It owns no networking,
 database, clock, randomness, or UI behavior.
 
+## Source layout
+
+`lib.rs` is the public facade for domain and event values. Implementation
+responsibilities are separated internally:
+
+- `board.rs` owns direct-support board state and derived board queries.
+- `game.rs` owns replay state, event sequencing, Undo, and derived turn
+  records.
+- `rules.rs` owns deterministic entry mutations, incremental validation,
+  automatic evictions, and completion checks.
+- `history.rs` owns the client-local `HistoryCursor`.
+- `violation.rs` owns blocked-operation violation values.
+- `tests.rs` contains the table-driven core regression suite.
+
+These are implementation boundaries, not separate crates or wire contracts.
+
 ## Current public model
 
 The engine exposes `Game` (also available as the replay-oriented `GameState`
@@ -64,3 +80,9 @@ Both the server and browser reconstruct the same opaque state from
 `GameCreated` and an ordered log of accepted deltas. See
 [implementation.md](implementation.md) and [network.md](network.md) for the
 transport and replay contract.
+
+## Tests
+
+Core tests live in `src/tests.rs`. Rules changes must cover valid and invalid
+intermediate positions, deterministic replay, Undo, directional cursor steps,
+and transactional event ingestion.

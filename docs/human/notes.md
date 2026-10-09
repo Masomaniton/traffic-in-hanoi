@@ -5,5 +5,6 @@ Make sure we do not use a Vec of Batch.
 ReplyBootstrap probably does not need sequence numbers.
 Consider moving over to UDP since we already have sequence numbers.
 Allow deltas to be multi-turn so that we can better group network stuff.
+How do we display an invalid fulfilment where two cards have the same support. 
 
 Prompt:
