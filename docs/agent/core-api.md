@@ -15,6 +15,13 @@ game.apply(operation)
 game.undo()
 ```
 
+Browser presentation state uses the opaque `HistoryCursor`, constructed from a
+fully replayed `Game`. It exposes `game()`, `is_live()`, directional
+`step_back_batch()` / `step_forward_batch()` methods, and transactional
+`apply_event(event) -> bool` ingestion. The cursor's surviving local history
+is separate from the append-only event log; Undo is an event, not a cursor
+entry.
+
 `Layout` supports any finite, normalized set of non-negative coordinate squares
 with orthogonal adjacency. It contains a configurable rank count and four
 distinct special squares. `Card` uses `Owner` (`Heart` or `Spade`) and a

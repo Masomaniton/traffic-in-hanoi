@@ -15,6 +15,20 @@ them deterministically.
 The local demo uses the same model in memory only; it intentionally loses rooms
 and logs when the process restarts.
 
+The replay values owned by `traffic-core` are:
+
+```rust
+pub struct GameSequence(u64); // opaque, monotonically increasing event number
+pub struct GameCreated { layout: Layout }
+pub struct GameEvent { sequence: GameSequence, delta: GameDelta }
+```
+
+`GameSequence::INITIAL` is zero and denotes the state immediately after
+`GameCreated`. Accepted events start at one and are contiguous. A submission
+includes the sequence the client has applied; the server rejects it when it is
+not current, preventing stale actions from being interpreted against a newer
+board.
+
 ## Synchronization modes
 
 **Catch-up** is memory-preserving reconnection. The client retains a locally
@@ -23,7 +37,9 @@ replayed game state and asks for the events after its highest contiguous
 
 **Replay bootstrap** is memoryless re-entry. An authenticated account may open
 the game with no local state; the server supplies `GameCreated` and the full
-event log. The browser reconstructs state locally without a server snapshot.
+ordered delta log. Delta sequences are implicit in the bootstrap list: the
+first delta is sequence one and every following delta increments it. The
+browser reconstructs state locally without a server snapshot.
 
 ## Submission
 

@@ -59,6 +59,6 @@ The board's `active` line identifies whose turn it is.
 ## Re-entry modes
 
 Refreshing a connected profile performs **replay bootstrap**: the server sends
-`GameCreated` plus the complete event log. Future UI work will use
+`GameCreated` plus the complete ordered delta log. Future UI work will use
 **catch-up** for a connection drop when the browser still retains its local
 replica.

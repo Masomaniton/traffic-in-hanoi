@@ -6,6 +6,12 @@ Build a browser-playable, real-time implementation of **Traffic in Hanoi**. Play
 
 The application is a **100% Rust stack**: Rust on the server and Rust compiled to WebAssembly in the browser. Do not introduce JavaScript or TypeScript application code. Small declarative JavaScript-free HTML and CSS assets are fine.
 
+## Documentation ownership
+
+`docs/human/` contains human-authored notes. `docs/agent/` contains the
+technical specifications and implementation documentation maintained during
+agent work. Keep the authorship distinction out of the documents themselves.
+
 ## Workspace ownership
 
 | Crate | Owns | Must not own |
@@ -35,15 +41,15 @@ Use authoritative server simulation. Clients may optimistically preview a delta,
 
 Use a room/game actor (one Tokio task owning one in-memory game) rather than sharing mutable `GameState` behind locks. The actor serializes commands, validates the acting player and known sequence, applies `traffic-core`, persists one accepted `GameEvent`, then broadcasts it. This prevents turn races and keeps reconnect behavior understandable.
 
-Persist an append-only game event log. Traffic in Hanoi has public board information: broadcast root selections, intentions, fulfilments, end attempts, and Undo live to all participants. The shared rules engine records per-turn history entries (`Root`, `Intention`, `Fulfilment`, `End`, and derived `Eviction`) in batches. The network carries player deltas and ordered events; clients never submit evictions directly. Clients retain and replay the complete log. A future server-only checkpoint is optional optimization, never the canonical record or a required client payload.
+Persist an append-only game event log. Traffic in Hanoi has public board information: broadcast root selections, intentions, fulfilments, end attempts, and Undo live to all participants. The shared rules engine records surviving reversible history entries (`Root`, `Intention`, `Fulfilment`, `End`, and derived `Eviction`); Undo removes the final operation/eviction run without becoming a local history entry. The network carries player deltas and ordered events; clients never submit evictions directly. Clients retain and replay the complete log. A future server-only checkpoint is optional optimization, never the canonical record or a required client payload.
 
-Treat an in-progress turn as a server-authoritative, reversible transaction. The server validates each appended history entry incrementally and derives eviction entries one at a time. A batch stops at its first invalid history position and is then blocked; no later operation is accepted until Undo removes that final batch. Do not treat the final turn submission as the sole rules-validation point. The precise mechanics are specified in `docs/rules.md` and `docs/implementation.md`.
+Treat an in-progress turn as a server-authoritative, reversible transaction. The server validates each appended history entry incrementally and derives eviction entries one at a time. A batch stops at its first invalid history position and is then blocked; no later operation is accepted until Undo removes that final batch. Do not treat the final turn submission as the sole rules-validation point. The precise mechanics are specified in `docs/agent/rules.md` and `docs/agent/implementation.md`.
 
 ## Current local demo
 
 The local demo is intentionally in-memory: it creates private two-seat rooms,
 uses separate anonymous cookie sessions, and loses all rooms on server restart.
-Run instructions are in `docs/local-demo.md`. It serves a Trunk-built WASM
+Run instructions are in `docs/agent/local-demo.md`. It serves a Trunk-built WASM
 bundle from `crates/traffic-server/static/`, which is generated and ignored.
 Use `cargo run -p traffic-server -- --trace-protocol` only for local protocol
 diagnostics; it must never log cookies or session identifiers.
@@ -77,7 +83,7 @@ CatchUpAfter { sequence }
 RequestReplayBootstrap
 
 GameEvent { sequence, delta }
-ReplayBootstrap { created, events }
+ReplayBootstrap { created, deltas }
 ```
 
 Commands cover live turn actions (root, intention, fulfilment, undo, and end). A stale duplicate is rejected because its `known_sequence` is no longer current. **Catch-up** means a memory-preserving reconnection that requests events after a retained sequence. **Replay bootstrap** means a memoryless authenticated re-entry that receives `GameCreated` and the complete log. Do not use client-facing game snapshots.

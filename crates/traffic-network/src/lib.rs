@@ -23,7 +23,9 @@ pub enum ServerMessage {
     /// Used only when the client has no retained local game replica.
     ReplayBootstrap {
         created: GameCreated,
-        events: Vec<GameEvent>,
+        /// Ordered accepted deltas. Their sequences are implicit: the first is
+        /// sequence one after `created`, and each following delta increments it.
+        deltas: Vec<GameDelta>,
     },
     /// A contiguous portion of the canonical append-only event log.
     Events { events: Vec<GameEvent> },

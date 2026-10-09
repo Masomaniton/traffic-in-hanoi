@@ -199,11 +199,18 @@ fn show(game: &Game) {
         game.winner()
     );
     for square in game.layout().squares() {
-        let pile = game.board().pile(square);
-        let cards = if pile.is_empty() {
+        let cards_at_square: Vec<_> = game
+            .board()
+            .cards()
+            .filter_map(|(card, _)| {
+                (game.board().square_of(card).ok() == Some(square)).then_some(card)
+            })
+            .collect();
+        let cards = if cards_at_square.is_empty() {
             "·".to_owned()
         } else {
-            pile.iter()
+            cards_at_square
+                .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(" ")

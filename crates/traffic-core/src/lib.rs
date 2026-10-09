@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -262,19 +262,13 @@ impl Board {
             Support::Card(card) => self.square_of(card),
         }
     }
-    pub fn occupant(&self, support: Support) -> Option<Card> {
+    pub fn occupants(&self, support: Support) -> impl Iterator<Item = Card> + '_ {
         self.cards
             .iter()
-            .find_map(|(card, state)| (state.support == support).then_some(*card))
+            .filter_map(move |(card, state)| (state.support == support).then_some(*card))
     }
-    pub fn pile(&self, square: Square) -> Vec<Card> {
-        let mut pile = Vec::new();
-        let mut support = Support::Base(square);
-        while let Some(card) = self.occupant(support) {
-            pile.push(card);
-            support = Support::Card(card);
-        }
-        pile
+    pub fn is_occupied(&self, support: Support) -> bool {
+        self.occupants(support).next().is_some()
     }
 }
 
@@ -289,8 +283,19 @@ pub enum Operation {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum HistoryEntry {
     Root(Card),
+    Intention(Card),
+    Fulfilment { source: Support, card: Card },
+    End,
+    Eviction(Card),
+}
+
+/// The forward representation of a local history entry. Unlike `HistoryEntry`,
+/// it retains command fields needed to apply the next state transition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ForwardHistoryEntry {
+    Root(Card),
     Intention { card: Card, target: Support },
-    Fulfilment { card: Card, target: Support },
+    Fulfilment(Card),
     End,
     Eviction(Card),
 }
@@ -351,8 +356,8 @@ impl fmt::Display for HistoryEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Root(card) => write!(f, "Root({card})"),
-            Self::Intention { card, target } => write!(f, "Intention({card} -> {target})"),
-            Self::Fulfilment { card, target } => write!(f, "Fulfilment({card} -> {target})"),
+            Self::Intention(card) => write!(f, "Intention({card})"),
+            Self::Fulfilment { source, card } => write!(f, "Fulfilment({card} from {source})"),
             Self::End => f.write_str("End"),
             Self::Eviction(card) => write!(f, "Eviction({card})"),
         }
@@ -412,20 +417,103 @@ impl fmt::Display for Violation {
 }
 
 #[derive(Clone, Debug)]
-struct Snapshot {
-    board: Board,
-    active_card: Option<Card>,
-}
-#[derive(Clone, Debug)]
-struct Batch {
-    before: Snapshot,
-    entries: Vec<HistoryEntry>,
-    blocked: Option<Vec<Violation>>,
-}
-#[derive(Clone, Debug)]
 pub struct TurnRecord {
     pub player: Owner,
     pub entries: Vec<HistoryEntry>,
+}
+/// Client-local position within the surviving reversible history. The
+/// append-only `GameEvent` log is deliberately not represented here.
+#[derive(Clone, Debug)]
+pub struct HistoryCursor {
+    game: Game,
+    past: Vec<HistoryEntry>,
+    future: VecDeque<ForwardHistoryEntry>,
+    created: GameCreated,
+    events: Vec<GameEvent>,
+}
+
+impl HistoryCursor {
+    pub fn from_game(game: Game) -> Self {
+        let past = game.history();
+        Self {
+            created: game.created.clone(),
+            events: game.events.clone(),
+            game,
+            past,
+            future: VecDeque::new(),
+        }
+    }
+    pub fn game(&self) -> &Game {
+        &self.game
+    }
+    pub fn is_live(&self) -> bool {
+        self.future.is_empty()
+    }
+    pub fn step_back_batch(&mut self) -> bool {
+        let mut moved = false;
+        while let Some(entry) = self.past.pop() {
+            let eviction = matches!(entry, HistoryEntry::Eviction(_));
+            let _ = self.game.past.pop();
+            self.future
+                .push_front(self.game.unapply_history_entry(entry));
+            moved = true;
+            if !eviction {
+                break;
+            }
+        }
+        moved
+    }
+    pub fn step_forward_batch(&mut self) -> bool {
+        let Some(entry) = self.future.pop_front() else {
+            return false;
+        };
+        let past = self.game.apply_forward_history_entry(entry);
+        self.game.past.push(past.clone());
+        self.past.push(past);
+        while matches!(self.future.front(), Some(ForwardHistoryEntry::Eviction(_))) {
+            let entry = self.future.pop_front().expect("front was present");
+            let past = self.game.apply_forward_history_entry(entry);
+            self.game.past.push(past.clone());
+            self.past.push(past);
+        }
+        true
+    }
+    pub fn apply_event(&mut self, event: GameEvent) -> bool {
+        let expected = self
+            .events
+            .last()
+            .map_or(GameSequence::INITIAL, GameEvent::sequence)
+            .0
+            .checked_add(1)
+            .map(GameSequence);
+        if expected != Some(event.sequence) {
+            return false;
+        }
+        let was_live = self.is_live();
+        let reviewed_entries = self.past.len();
+        let mut events = self.events.clone();
+        events.push(event);
+        let mut game = Game::from_created(self.created.clone());
+        if events
+            .into_iter()
+            .any(|event| game.apply_event(event).is_err())
+        {
+            return false;
+        }
+        let mut replacement = Self::from_game(game);
+        if !was_live {
+            while replacement.past.len() > reviewed_entries {
+                if !replacement.step_back_batch() {
+                    return false;
+                }
+            }
+            if replacement.past.len() != reviewed_entries {
+                return false;
+            }
+        }
+        *self = replacement;
+        true
+    }
 }
 #[derive(Clone, Debug)]
 pub enum ApplyResult {
@@ -443,9 +531,8 @@ pub struct Game {
     board: Board,
     active_player: Owner,
     active_card: Option<Card>,
-    batches: Vec<Batch>,
+    past: Vec<HistoryEntry>,
     records: Vec<TurnRecord>,
-    winner: Option<Owner>,
 }
 
 /// The complete locally replayed game state. `Game` remains an alias while the
@@ -485,9 +572,8 @@ impl Game {
             board: Board { cards },
             active_player: Owner::Heart,
             active_card: None,
-            batches: Vec::new(),
+            past: Vec::new(),
             records: Vec::new(),
-            winner: None,
         }
     }
     pub fn layout(&self) -> &Layout {
@@ -511,19 +597,50 @@ impl Game {
     pub const fn active_card(&self) -> Option<Card> {
         self.active_card
     }
-    pub const fn winner(&self) -> Option<Owner> {
-        self.winner
+    pub fn winner(&self) -> Option<Owner> {
+        (self.active_card.is_none() && self.complete(self.active_player).ok()?)
+            .then_some(self.active_player)
     }
-    pub fn blocked(&self) -> Option<&[Violation]> {
-        self.batches
-            .last()
-            .and_then(|batch| batch.blocked.as_deref())
+    pub fn blocked(&self) -> Option<Vec<Violation>> {
+        let entry = self
+            .past
+            .iter()
+            .rev()
+            .find(|entry| !matches!(entry, HistoryEntry::Eviction(_)))?;
+        let violations = match entry {
+            HistoryEntry::Root(card) => {
+                let mut result = Vec::new();
+                if card.owner != self.active_player {
+                    result.push(Violation::RootOwner);
+                }
+                for (other, state) in self.board.cards() {
+                    if other.owner == self.active_player
+                        && other != *card
+                        && state.status == CardStatus::Evicted
+                    {
+                        result.push(Violation::ActiveEviction(other));
+                    }
+                }
+                result
+            }
+            HistoryEntry::Intention(card) => self
+                .validate_intention_position(*card)
+                .unwrap_or_else(|_| vec![Violation::NotEvicted(*card)]),
+            HistoryEntry::Fulfilment { card, .. } => self.fulfilment_violations(*card),
+            HistoryEntry::End => self
+                .board
+                .cards
+                .values()
+                .any(|state| state.status != CardStatus::Idle)
+                .then_some(Violation::PendingCards)
+                .into_iter()
+                .collect(),
+            HistoryEntry::Eviction(_) => Vec::new(),
+        };
+        (!violations.is_empty()).then_some(violations)
     }
     pub fn history(&self) -> Vec<HistoryEntry> {
-        self.batches
-            .iter()
-            .flat_map(|batch| batch.entries.iter().cloned())
-            .collect()
+        self.past.clone()
     }
     pub fn records(&self) -> &[TurnRecord] {
         &self.records
@@ -536,7 +653,14 @@ impl Game {
 
     pub fn apply_delta(&mut self, delta: GameDelta) -> Result<(GameEvent, ApplyResult), CoreError> {
         let sequence = self.next_sequence()?;
-        let outcome = self.apply_delta_inner(delta.clone())?;
+        let before = self.clone();
+        let outcome = match self.apply_delta_inner(delta.clone()) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                *self = before;
+                return Err(error);
+            }
+        };
         let event = GameEvent::new(sequence, delta);
         self.sequence = sequence;
         self.events.push(event.clone());
@@ -549,7 +673,14 @@ impl Game {
                 "game event sequence is not the next sequence",
             ));
         }
-        let outcome = self.apply_delta_inner(event.delta.clone())?;
+        let before = self.clone();
+        let outcome = match self.apply_delta_inner(event.delta.clone()) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                *self = before;
+                return Err(error);
+            }
+        };
         self.sequence = event.sequence;
         self.events.push(event);
         Ok(outcome)
@@ -563,52 +694,20 @@ impl Game {
     }
 
     fn apply_operation(&mut self, operation: Operation) -> Result<ApplyResult, CoreError> {
-        if self.winner.is_some() {
+        if self.winner().is_some() {
             return Err(CoreError::new("game has ended"));
         }
         if self.blocked().is_some() {
             return Err(CoreError::new("current batch is blocked; undo first"));
         }
-        let before = Snapshot {
-            board: self.board.clone(),
-            active_card: self.active_card,
-        };
-        let mut batch = Batch {
-            before,
-            entries: Vec::new(),
-            blocked: None,
-        };
-        let violations = match operation.clone() {
-            Operation::Root(card) => self.apply_root(card, &mut batch)?,
-            Operation::Intention { card, target } => {
-                self.apply_intention(card, target, &mut batch)?
-            }
-            Operation::Fulfilment(card) => self.apply_fulfilment(card, &mut batch)?,
-            Operation::End => self.apply_end(&mut batch),
-        };
-        if !violations.is_empty() {
-            batch.blocked = Some(violations.clone());
-            self.batches.push(batch);
+        self.apply_operation_entry(operation)?;
+        if let Some(violations) = self.blocked() {
             return Ok(ApplyResult::Blocked(violations));
         }
-        if matches!(operation, Operation::End) {
-            let mut entries = self.history();
-            entries.extend(batch.entries);
-            self.records.push(TurnRecord {
-                player: self.active_player,
-                entries,
-            });
-            self.batches.clear();
-            self.active_card = None;
-            self.active_player = self.active_player.other();
-            if self.complete(self.active_player)? {
-                self.winner = Some(self.active_player);
-                return Ok(ApplyResult::Ended(self.active_player));
-            }
-            return Ok(ApplyResult::Applied);
-        }
-        self.batches.push(batch);
-        Ok(ApplyResult::Applied)
+        self.refresh_records();
+        Ok(self
+            .winner()
+            .map_or(ApplyResult::Applied, ApplyResult::Ended))
     }
 
     pub fn undo(&mut self) -> Result<ApplyResult, CoreError> {
@@ -617,12 +716,108 @@ impl Game {
     }
 
     fn undo_batch(&mut self) -> Result<ApplyResult, CoreError> {
-        let Some(batch) = self.batches.pop() else {
+        if self.past.is_empty() {
             return Err(CoreError::new("there is no batch to undo"));
-        };
-        self.board = batch.before.board;
-        self.active_card = batch.before.active_card;
+        }
+        loop {
+            let entry = self
+                .past
+                .pop()
+                .ok_or_else(|| CoreError::new("history is inconsistent"))?;
+            let eviction = matches!(entry, HistoryEntry::Eviction(_));
+            self.unapply_history_entry(entry);
+            if !eviction {
+                break;
+            }
+        }
+        self.refresh_records();
         Ok(ApplyResult::Applied)
+    }
+
+    fn apply_forward_history_entry(&mut self, entry: ForwardHistoryEntry) -> HistoryEntry {
+        match entry {
+            ForwardHistoryEntry::Root(card) => {
+                self.active_card = Some(card);
+                let state = self.board.cards.get_mut(&card).expect("known history card");
+                state.status = CardStatus::Evicted;
+                HistoryEntry::Root(card)
+            }
+            ForwardHistoryEntry::Eviction(card) => {
+                let state = self.board.cards.get_mut(&card).expect("known history card");
+                state.status = CardStatus::Evicted;
+                HistoryEntry::Eviction(card)
+            }
+            ForwardHistoryEntry::Intention { card, target } => {
+                let state = self.board.cards.get_mut(&card).expect("known history card");
+                state.status = CardStatus::Intended(target);
+                HistoryEntry::Intention(card)
+            }
+            ForwardHistoryEntry::Fulfilment(card) => {
+                let state = self.board.cards.get_mut(&card).expect("known history card");
+                let source = state.support;
+                let CardStatus::Intended(target) = state.status else {
+                    unreachable!("forward fulfilment must follow its intention");
+                };
+                state.support = target;
+                state.status = CardStatus::Idle;
+                HistoryEntry::Fulfilment { source, card }
+            }
+            ForwardHistoryEntry::End => {
+                self.active_card = None;
+                self.active_player = self.active_player.other();
+                HistoryEntry::End
+            }
+        }
+    }
+
+    fn unapply_history_entry(&mut self, entry: HistoryEntry) -> ForwardHistoryEntry {
+        match entry {
+            HistoryEntry::Root(card) => {
+                self.board
+                    .cards
+                    .get_mut(&card)
+                    .expect("known history card")
+                    .status = CardStatus::Idle;
+                self.active_card = None;
+                ForwardHistoryEntry::Root(card)
+            }
+            HistoryEntry::Eviction(card) => {
+                self.board
+                    .cards
+                    .get_mut(&card)
+                    .expect("known history card")
+                    .status = CardStatus::Idle;
+                ForwardHistoryEntry::Eviction(card)
+            }
+            HistoryEntry::Intention(card) => {
+                let state = self.board.cards.get_mut(&card).expect("known history card");
+                let CardStatus::Intended(target) = state.status else {
+                    unreachable!("reverse intention must be currently intended");
+                };
+                state.status = CardStatus::Evicted;
+                ForwardHistoryEntry::Intention { card, target }
+            }
+            HistoryEntry::Fulfilment { source, card } => {
+                let state = self.board.cards.get_mut(&card).expect("known history card");
+                let target = state.support;
+                state.support = source;
+                state.status = CardStatus::Intended(target);
+                ForwardHistoryEntry::Fulfilment(card)
+            }
+            HistoryEntry::End => {
+                self.active_player = self.active_player.other();
+                self.active_card = self
+                    .past
+                    .iter()
+                    .rev()
+                    .take_while(|entry| !matches!(entry, HistoryEntry::End))
+                    .find_map(|entry| match entry {
+                        HistoryEntry::Root(card) => Some(*card),
+                        _ => None,
+                    });
+                ForwardHistoryEntry::End
+            }
+        }
     }
 
     fn next_sequence(&self) -> Result<GameSequence, CoreError> {
@@ -633,98 +828,111 @@ impl Game {
             .ok_or_else(|| CoreError::new("game event sequence overflow"))
     }
 
-    fn apply_root(&mut self, card: Card, batch: &mut Batch) -> Result<Vec<Violation>, CoreError> {
-        let mut violations = Vec::new();
-        if self.active_card.is_some() {
-            violations.push(Violation::RootAlreadySelected);
-        }
-        if card.owner != self.active_player {
-            violations.push(Violation::RootOwner);
-        }
-        batch.entries.push(HistoryEntry::Root(card));
-        if !violations.is_empty() {
-            return Ok(violations);
-        }
-        self.active_card = Some(card);
-        self.board
-            .cards
-            .get_mut(&card)
-            .ok_or_else(|| CoreError::new("unknown root card"))?
-            .status = CardStatus::Evicted;
-        self.after_eviction(card, batch)
-    }
-    fn apply_intention(
-        &mut self,
-        card: Card,
-        target: Support,
-        batch: &mut Batch,
-    ) -> Result<Vec<Violation>, CoreError> {
-        let violations = self.validate_intention(card, target)?;
-        batch.entries.push(HistoryEntry::Intention { card, target });
-        if !violations.is_empty() {
-            return Ok(violations);
-        }
-        self.board
-            .cards
-            .get_mut(&card)
-            .ok_or_else(|| CoreError::new(format!("unknown card {card}")))?
-            .status = CardStatus::Intended(target);
-        match self.board.occupant(target) {
-            Some(occupant) => self.append_eviction(occupant, batch),
-            None => Ok(Vec::new()),
-        }
-    }
-    fn apply_fulfilment(
-        &mut self,
-        card: Card,
-        batch: &mut Batch,
-    ) -> Result<Vec<Violation>, CoreError> {
-        let (target, violations) = self.validate_fulfilment(card)?;
-        batch
-            .entries
-            .push(HistoryEntry::Fulfilment { card, target });
-        if !violations.is_empty() {
-            return Ok(violations);
-        }
-        let state = self
-            .board
-            .cards
-            .get_mut(&card)
-            .ok_or_else(|| CoreError::new(format!("unknown card {card}")))?;
-        state.support = target;
-        state.status = CardStatus::Idle;
-        if let Support::Card(lower) = target
-            && lower.owner != card.owner
-        {
-            return self.append_eviction(card, batch);
-        }
-        Ok(Vec::new())
-    }
-    fn apply_end(&self, batch: &mut Batch) -> Vec<Violation> {
-        batch.entries.push(HistoryEntry::End);
-        if self
-            .board
-            .cards
-            .values()
-            .any(|state| state.status != CardStatus::Idle)
-        {
-            vec![Violation::PendingCards]
-        } else {
-            Vec::new()
+    fn refresh_records(&mut self) {
+        let mut player = Owner::Heart;
+        let mut start = 0;
+        self.records.clear();
+        for (index, entry) in self.past.iter().enumerate() {
+            if matches!(entry, HistoryEntry::End) {
+                self.records.push(TurnRecord {
+                    player,
+                    entries: self.past[start..=index].to_vec(),
+                });
+                player = player.other();
+                start = index + 1;
+            }
         }
     }
 
-    fn validate_intention(&self, card: Card, target: Support) -> Result<Vec<Violation>, CoreError> {
+    fn apply_operation_entry(&mut self, operation: Operation) -> Result<(), CoreError> {
+        match operation {
+            Operation::Root(card) => {
+                self.board
+                    .card_state(card)
+                    .ok_or_else(|| CoreError::new(format!("unknown card {card}")))?;
+                self.active_card = Some(card);
+                self.board
+                    .cards
+                    .get_mut(&card)
+                    .ok_or_else(|| CoreError::new("unknown root card"))?
+                    .status = CardStatus::Evicted;
+                self.past.push(HistoryEntry::Root(card));
+                let cover = self.board.occupants(Support::Card(card)).next();
+                if let Some(cover) = cover {
+                    self.append_eviction_chain(cover)?;
+                }
+            }
+            Operation::Intention { card, target } => {
+                self.board
+                    .card_state(card)
+                    .ok_or_else(|| CoreError::new(format!("unknown card {card}")))?;
+                if let Support::Card(target_card) = target {
+                    self.board.card_state(target_card).ok_or_else(|| {
+                        CoreError::new(format!("unknown support card {target_card}"))
+                    })?;
+                }
+                self.board
+                    .cards
+                    .get_mut(&card)
+                    .ok_or_else(|| CoreError::new(format!("unknown card {card}")))?
+                    .status = CardStatus::Intended(target);
+                self.past.push(HistoryEntry::Intention(card));
+                let occupant = self
+                    .board
+                    .occupants(target)
+                    .find(|occupant| *occupant != card);
+                if let Some(occupant) = occupant {
+                    self.append_eviction_chain(occupant)?;
+                }
+            }
+            Operation::Fulfilment(card) => {
+                let state = self
+                    .board
+                    .card_state(card)
+                    .cloned()
+                    .ok_or_else(|| CoreError::new(format!("unknown card {card}")))?;
+                let CardStatus::Intended(target) = state.status else {
+                    return Err(CoreError::new(format!("{card} is not intended")));
+                };
+                self.board
+                    .cards
+                    .get_mut(&card)
+                    .ok_or_else(|| CoreError::new(format!("unknown card {card}")))?
+                    .support = target;
+                self.board
+                    .cards
+                    .get_mut(&card)
+                    .ok_or_else(|| CoreError::new(format!("unknown card {card}")))?
+                    .status = CardStatus::Idle;
+                self.past.push(HistoryEntry::Fulfilment {
+                    source: state.support,
+                    card,
+                });
+                if matches!(target, Support::Card(lower) if lower.owner != card.owner) {
+                    self.append_eviction_chain(card)?;
+                }
+            }
+            Operation::End => {
+                self.past.push(HistoryEntry::End);
+                self.active_card = None;
+                self.active_player = self.active_player.other();
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_intention_position(&self, card: Card) -> Result<Vec<Violation>, CoreError> {
         let state = self
             .board
             .cards
             .get(&card)
             .ok_or_else(|| CoreError::new(format!("unknown card {card}")))?;
         let mut v = Vec::new();
-        if state.status != CardStatus::Evicted {
+        let CardStatus::Intended(target) = state.status else {
             v.push(Violation::NotEvicted(card));
-        }
-        if self.board.occupant(Support::Card(card)).is_some() {
+            return Ok(v);
+        };
+        if self.board.is_occupied(Support::Card(card)) {
             v.push(Violation::CoveredMover(card));
         }
         if card.owner == self.active_player && self.active_card != Some(card) {
@@ -749,12 +957,18 @@ impl Game {
                 v.push(Violation::SupportCollision(lower));
             }
         }
-        if let Some(occupant) = self.board.occupant(target)
+        if let Some(occupant) = self
+            .board
+            .occupants(target)
+            .find(|occupant| *occupant != card)
             && occupant.rank >= card.rank
         {
             v.push(Violation::CannotPushEqualOrLarger);
         }
         for (other, state) in self.board.cards() {
+            if other == card {
+                continue;
+            }
             if let CardStatus::Intended(other_target) = state.status {
                 if other_target == target {
                     v.push(Violation::TargetCollision(target));
@@ -766,68 +980,37 @@ impl Game {
         }
         Ok(v)
     }
-    fn validate_fulfilment(&self, card: Card) -> Result<(Support, Vec<Violation>), CoreError> {
-        let state = self
-            .board
-            .cards
-            .get(&card)
-            .ok_or_else(|| CoreError::new(format!("unknown card {card}")))?;
-        let target = match state.status {
-            CardStatus::Intended(target) => target,
-            _ => {
-                return Ok((
-                    Support::Base(self.board.square_of(card)?),
-                    vec![Violation::NotIntended(card)],
-                ));
-            }
+    fn fulfilment_violations(&self, card: Card) -> Vec<Violation> {
+        let Some(state) = self.board.cards.get(&card) else {
+            return vec![Violation::NotIntended(card)];
         };
         let mut v = Vec::new();
-        if self.board.occupant(Support::Card(card)).is_some() {
+        if self.board.is_occupied(Support::Card(card)) {
             v.push(Violation::CoveredMover(card));
         }
-        if self.board.occupant(target).is_some() {
-            v.push(Violation::OccupiedTarget(target));
+        if self
+            .board
+            .occupants(state.support)
+            .any(|occupant| occupant != card)
+        {
+            v.push(Violation::OccupiedTarget(state.support));
         }
-        Ok((target, v))
+        v
     }
-    fn append_eviction(
-        &mut self,
-        card: Card,
-        batch: &mut Batch,
-    ) -> Result<Vec<Violation>, CoreError> {
+    fn append_eviction_chain(&mut self, card: Card) -> Result<(), CoreError> {
         if self.board.cards[&card].status != CardStatus::Idle {
-            return Ok(Vec::new());
+            return Ok(());
         }
         self.board
             .cards
             .get_mut(&card)
             .ok_or_else(|| CoreError::new(format!("unknown card {card}")))?
             .status = CardStatus::Evicted;
-        batch.entries.push(HistoryEntry::Eviction(card));
-        self.after_eviction(card, batch)
-    }
-    fn after_eviction(
-        &mut self,
-        card: Card,
-        batch: &mut Batch,
-    ) -> Result<Vec<Violation>, CoreError> {
-        let mut v = Vec::new();
-        if card.owner == self.active_player && self.active_card != Some(card) {
-            v.push(Violation::ActiveEviction(card));
-        }
-        for (_, state) in self.board.cards() {
-            if let CardStatus::Intended(Support::Card(support)) = state.status
-                && support == card
-            {
-                v.push(Violation::SupportCollision(card));
-            }
-        }
-        if !v.is_empty() {
-            return Ok(v);
-        }
-        match self.board.occupant(Support::Card(card)) {
-            Some(cover) => self.append_eviction(cover, batch),
-            None => Ok(Vec::new()),
+        self.past.push(HistoryEntry::Eviction(card));
+        let cover = self.board.occupants(Support::Card(card)).next();
+        match cover {
+            Some(cover) => self.append_eviction_chain(cover),
+            None => Ok(()),
         }
     }
     fn complete(&self, owner: Owner) -> Result<bool, CoreError> {
@@ -956,5 +1139,92 @@ mod tests {
         assert_eq!(original.active_player(), replay.active_player());
         assert_eq!(original.active_card(), replay.active_card());
         assert_eq!(original.history(), replay.history());
+    }
+
+    #[test]
+    fn fulfilment_history_records_the_card_and_source_support() {
+        let mut game = Game::new(Layout::standard(2).unwrap());
+        let card = Card::from_display(Owner::Heart, 1, 2).unwrap();
+        let lower = Card::from_display(Owner::Heart, 2, 2).unwrap();
+        let target = Support::Base(Square::new(0, 1));
+
+        game.apply(Operation::Root(card)).unwrap();
+        game.apply(Operation::Intention { card, target }).unwrap();
+        game.apply(Operation::Fulfilment(card)).unwrap();
+
+        assert!(game.history().contains(&HistoryEntry::Fulfilment {
+            source: Support::Card(lower),
+            card,
+        }));
+    }
+
+    #[test]
+    fn cursor_steps_a_complete_history_batch_without_replay() {
+        let mut game = Game::new(Layout::standard(2).unwrap());
+        let card = Card::from_display(Owner::Heart, 1, 2).unwrap();
+        game.apply(Operation::Root(card)).unwrap();
+        let mut cursor = HistoryCursor::from_game(game);
+
+        assert!(cursor.step_back_batch());
+        assert_eq!(
+            cursor.game().board().card_state(card).unwrap().status,
+            CardStatus::Idle
+        );
+        assert!(cursor.step_forward_batch());
+        assert_eq!(
+            cursor.game().board().card_state(card).unwrap().status,
+            CardStatus::Evicted
+        );
+    }
+
+    #[test]
+    fn cursor_ingests_undo_while_reviewing_without_losing_its_position() {
+        let created = GameCreated::new(Layout::standard(2).unwrap());
+        let card = Card::from_display(Owner::Heart, 1, 2).unwrap();
+        let mut game = Game::from_created(created);
+        game.apply_delta(GameDelta::Operation(Operation::Root(card)))
+            .unwrap();
+        let (_, undo_outcome) = game.apply_delta(GameDelta::Undo).unwrap();
+        assert!(matches!(undo_outcome, ApplyResult::Applied));
+
+        let mut reviewed = Game::from_created(game.created().clone());
+        reviewed.apply_event(game.events()[0].clone()).unwrap();
+        let mut cursor = HistoryCursor::from_game(reviewed);
+        assert!(cursor.step_back_batch());
+
+        assert!(cursor.apply_event(game.events()[1].clone()));
+        assert!(cursor.is_live());
+        assert_eq!(
+            cursor.game().board().card_state(card).unwrap().status,
+            CardStatus::Idle
+        );
+    }
+
+    #[test]
+    fn cursor_rejects_a_gap_transactionally() {
+        let mut cursor = HistoryCursor::from_game(Game::new(Layout::standard(2).unwrap()));
+        let card = Card::from_display(Owner::Heart, 1, 2).unwrap();
+        assert!(!cursor.apply_event(GameEvent::new(
+            GameSequence(2),
+            GameDelta::Operation(Operation::Root(card)),
+        )));
+        assert!(cursor.game().history().is_empty());
+        assert!(cursor.is_live());
+    }
+
+    #[test]
+    fn cursor_stays_live_when_an_event_arrives_live() {
+        let mut source = Game::new(Layout::standard(2).unwrap());
+        let card = Card::from_display(Owner::Heart, 1, 2).unwrap();
+        let (event, _) = source
+            .apply_delta(GameDelta::Operation(Operation::Root(card)))
+            .unwrap();
+        let mut cursor = HistoryCursor::from_game(Game::new(Layout::standard(2).unwrap()));
+        assert!(cursor.apply_event(event));
+        assert!(cursor.is_live());
+        assert_eq!(
+            cursor.game().board().card_state(card).unwrap().status,
+            CardStatus::Evicted
+        );
     }
 }

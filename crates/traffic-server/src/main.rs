@@ -209,7 +209,11 @@ fn spawn_room(heart: SessionId, trace_protocol: bool) -> RoomHandle {
                         if session == heart || spade.as_ref() == Some(&session) {
                             let _ = outgoing.send(ServerMessage::ReplayBootstrap {
                                 created: created.clone(),
-                                events: game.events().to_vec(),
+                                deltas: game
+                                    .events()
+                                    .iter()
+                                    .map(|event| event.delta().clone())
+                                    .collect(),
                             });
                             if trace_protocol {
                                 eprintln!("→ replay bootstrap");

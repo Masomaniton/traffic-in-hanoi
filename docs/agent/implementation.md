@@ -36,6 +36,12 @@ pub struct CardState {
     pub status: CardStatus,
 }
 
+pub enum CardStatus {
+    Idle,
+    Evicted,
+    Intended(Support),
+}
+
 pub struct Board {
     pub cards: BTreeMap<Card, CardState>,
 }
@@ -45,9 +51,16 @@ pub struct Board {
 `Rank` stores its internal zero-based value and displays as `value + 1`.
 
 `CardState` intentionally stores only direct support. `square_of(card)` follows
-support links down to `Base(square)`; `occupant(support)` scans the card table.
-Both are bounded by the configurable card count, avoid divergent indexes, and
-should be optimized only after profiling.
+support links down to `Base(square)`. `occupants(support)` scans the card table
+and permits more than one direct occupant while a blocked fulfilment is being
+reviewed; `is_occupied(support)` is the corresponding existence query. These
+operations are bounded by the configurable card count, avoid divergent indexes,
+and should be optimized only after profiling.
+
+`CardStatus::Idle` is a card at rest, `Evicted` is a card temporarily lifted
+from its support, and `Intended(target)` records an announced but unfulfilled
+move. The target is repeated in this status because it is current game state,
+not history; it is required to validate and fulfil the intention.
 
 ```rust
 pub struct Layout {
@@ -64,20 +77,34 @@ Manhattan distance one.
 
 ## 2. History and batches
 
-The shared `traffic-core` engine maintains the current turn as ordered history
-entries:
+The shared `traffic-core` engine maintains all surviving history as ordered,
+reversible entries:
 
 ```text
-Root(card) | Intention(card, support) | Fulfilment(card, support) | End | Eviction(card)
+Root(card)
+| Intention(card)
+| Fulfilment { source, card }
+| End
+| Eviction(card)
 ```
 
 `Root`, `Intention`, `Fulfilment`, and `End` are player operations. `Eviction`
 is automatic.
 
+`Fulfilment` records the moving card and its source support, but not a target.
+While unapplying, the card's current support is the target. Its inverse
+restores direct support to `source` and status to `Intended(target)`. A card's
+square is derived from direct supports and is never stored independently.
+
+The entry types are direct, symmetric mutations. A blocked attempted operation
+still contributes its operation entry (and any preceding automatic evictions)
+so Undo can remove it. No board snapshots or per-event undo journal are kept.
+
 A **batch** starts with one operation and contains its following zero or more
 derived eviction entries. Undo removes the final batch. This grouping permits
 automatic evictions to be individually replayed while retaining correct causal
-rollback.
+rollback. Local left/right history navigation reverses or reapplies the whole
+batch: it visits trailing evictions first, then its player operation.
 
 ## 3. Incremental validation and blocked batches
 
@@ -94,25 +121,37 @@ nor searches whether an eviction sequence is ultimately solvable.
 ## 4. Undo and turn records
 
 Nothing in an open turn is permanent. Undo removes the final batch, whether it
-is blocked or valid. A valid `End` seals the turn into an immutable turn record
-for match replay; an invalid `End` is merely a blocked final batch.
+is blocked or valid. A valid `End` flips the active player and is retained as a
+history entry; completed turn records are derived from surviving entries. An
+invalid `End` is merely a blocked final batch.
 
 ## 5. Networking and replay
 
 The canonical network and persistence record is an append-only sequence of
-accepted game deltas. A delta is an operation or the Undo control:
+accepted game deltas. It is deliberately thinner than local reversible
+history: a delta expresses the attempted player command, while `traffic-core`
+derives source supports, resolved fulfilment transitions, evictions, and
+violations. A delta is an operation or the Undo control:
 
 ```text
-GameDelta = Operation(Root | Intention | Fulfilment | End) | Undo
+GameDelta = Operation(
+  Root(card)
+  | Intention { card, target }
+  | Fulfilment(card)
+  | End
+) | Undo
 ```
 
-`GameCreated` is immutable sequence-zero setup data. It provides the layout and
-rank count. Each later `GameEvent` has a monotonically increasing unsigned
-`GameSequence` and one accepted `GameDelta`. The acting owner is derivable from
-the replay state before the event; authentication and audit metadata belong to
-the server, not the core replay record.
+`GameCreated` is immutable setup data. It provides the layout and rank count.
+The sequenced `GameEvent` log and stale-submission contract are specified in
+[network.md](network.md). The acting owner is derivable from replay state
+before each event; authentication and audit metadata belong to the server, not
+the core replay record.
 Automatic evictions are derived by `traffic-core`; clients never submit or
-receive them as separate network deltas.
+receive them as separate network deltas. In particular, the network
+`Fulfilment(card)` retains the player's attempted card identity; the local
+history resolves it into `Fulfilment { source, card }` without duplicating the
+target.
 
 The server validates commands authoritatively and broadcasts accepted events in
 sequence order. Rejected transport commands—such as unauthorized commands or
@@ -136,9 +175,5 @@ retries, or concurrent player activity.
 
 ## 6. Local history navigation
 
-`HistoryCursor` is client-only presentation state and is never transmitted. It
-points to a **batch boundary**, not an individual history entry. Left/right
-navigation therefore moves before or after one player operation together with
-all its derived evictions—the same granularity as Undo. Up/down navigation
-moves between turn boundaries. Gameplay input is available only at the current
-live boundary.
+The directional cursor, batch navigation, and inverse entry types are
+specified in [history.md](history.md).
