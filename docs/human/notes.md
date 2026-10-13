@@ -10,17 +10,8 @@
 - When writing documents, I do not know how to make something plural but still signify that it is the same techical `term`.
 - Get feedback on naming conventions.
 
-TODO: vow-like representation
-
-```
-pile <- empty, stack
-stack -> square, card
-card -> rank, player, status
-adjacency -> square, square
-```
-
 # Future directions:
 - The most abstract board shape design consists of two fully customizable types: `square` and `adjacency`. Each `adjacency` has a source and target `square`. This theoretical allows for one way connections. Every `square` has a `pile`.
-- Consider bringing back the "red background" idea and actually showing illegal state.
+- Consider bringing back the "red background" idea and actually allowing the board to enter illegal state in order to better demonstrate why it is that the user cannot make that action.
 
 Prompt:

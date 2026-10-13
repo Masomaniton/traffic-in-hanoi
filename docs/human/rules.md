@@ -14,7 +14,7 @@ The possible states for a game are initial and subequent, where every subsequent
 
 The possible states for a square are idling and moving. A square in a moving state has the possible directions of up, down, left, and right one square. That is to say that a moving square indicates an orthogonally adjacent square as its target. This means that each special square connects only to a single corner.
 
-The possible statuses for a square are planted and evicted. A square is evicted if and only if the rank or owner eviction conditions hold. The rank eviction condition is applies to the target square of a moving square when the rank of the top card of the target square is less than the rank of the top card of the moving square. The owner eviction condition applies to a square when its pile is not empty and the owner of the top card is not the owner of every card it is stacked on.
+The possible statuses for a square are planted and evicted. A square is evicted if and only if the rank or owner eviction conditions hold. The rank eviction condition applies to a non-empty target square of a moving square and the rank of the top card of the target square is less than the rank of the top card of the moving square. The owner eviction condition applies to a square when its pile is not empty and the owner of the top card is not the owner of every card it is stacked on.
 
 *Note, states must be kept track of and only change due to player actions, while statuses are just needed to define the rules and update automatically.*
 
@@ -38,6 +38,8 @@ A player can only fulfil a square if and only if the square is moving, and the t
 
 *Note, there are no restrictions on when a start or finish can be entered or exited, only which cards can enter and exit. This even means that these special squares can have cards going in or out even when the owner of those cards is not taking the current turn.*
 
-*Note, these rules might very well end the player up in a dead end if the player does not look ahead during the turn. In particular, if a moving square targets a square with a top card belonging to the active player of lesser rank than the top card of the moving square, there is nothing to be done, and the player must go back. However, it is to the total discretion of the player the order in which to resolve evicted and moving squares in order to complete the turn.*
+*Note, these rules might very well let the player end up in a dead end if the player does not look ahead during the turn. In particular, if a moving square targets a square with a top card belonging to the active player of lesser rank than the top card of the moving square, there is nothing to be done, and the player must go back. However, it is to the total discretion of the player the order in which to resolve evicted and moving squares in order to complete the turn.*
 
 *Note, while the terms moving and idling only apply to squares and not to cards, they should really be thought of as describing the top card of the square.*
+
+*Note, all moving squares are not empty, and the top card of a moving square is the "moving card"*

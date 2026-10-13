@@ -8,4 +8,4 @@ At least for now, when a player does something illegal, we should not change the
 
 The player should have to manually end the turn. The controls I imagine are backspace for undo and enter to end a turn. We do not need something for reset for now, but our design should not prohibit that possibility. It is ok if time complexity of the eventual reset grows linearly with the numbers of actions in the turn so far.
 
-The active card for a turn can be held in in `Option<Rank>` because we already know what the owner has to be. We will know whether or not we are at the start of the turn by whether we see a `None` or `Some` variant in this type.
+The information about the active card will be held in a TODO.
