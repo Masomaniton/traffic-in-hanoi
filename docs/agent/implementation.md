@@ -79,7 +79,9 @@ are specified in [history.md](history.md).
 The current web implementation has not yet added this review cursor. It
 retains the received ordered event vector beside its latest reconstructed
 snapshot. That bridge supports bootstrap and contiguous event validation, but
-it is not the final client storage model.
+it is not the final client storage model. The target board geometry, pile
+rendering, pointer interactions, and keyboard behavior are specified in
+[ui.md](ui.md).
 
 ## 4. Networking and reconstruction
 
