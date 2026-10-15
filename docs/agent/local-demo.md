@@ -1,64 +1,20 @@
-# Local two-player demo
+# Local demo
 
-This is an intentionally bare-bones, in-memory demo. It has private rooms,
-anonymous cookie sessions, WebSockets, a replayed event log, and controls for
-every game delta. Restarting the server discards every room and game.
+The checked-in local demo still implements the retired support-based model. It
+must not be used as evidence for the pile-based rules or protocol described in
+the current agent specifications.
 
-## Prerequisites
+After the rewrite, the demo remains intentionally in-memory: private rooms,
+anonymous cookie sessions, WebSockets, a room-owned authoritative
+`ServerMatch`, and no restart recovery. It will:
 
-Install the browser target and Trunk once:
+1. bootstrap browsers with `GameDesign` plus the ordered `ServerEvent` log;
+2. let a browser retain a sequence position for catch-up after a temporary
+   disconnect;
+3. broadcast every accepted `Intend`, `Fulfil`, `EndTurn`, and open-turn
+   `Undo` event; and
+4. render client-local step-back/step-forward review without treating it as a
+   server command.
 
-```sh
-rustup target add wasm32-unknown-unknown
-cargo install trunk
-```
-
-## Build and run
-
-From the repository root, build the browser bundle into the directory served by
-the Axum server:
-
-```sh
-cd crates/traffic-web
-trunk build --release --dist ../traffic-server/static
-cd ../..
-cargo run -p traffic-server
-```
-
-For protocol diagnostics (never enabled in production), add the server flag:
-
-```sh
-cargo run -p traffic-server -- --trace-protocol
-```
-
-It logs submitted deltas and accepted event sequences, but never cookies or
-session identifiers.
-
-Open `http://127.0.0.1:3000` in two distinct Firefox profiles. Distinct
-profiles are important: they maintain separate anonymous session cookies while
-using the same local origin.
-
-## Play a local game
-
-1. In Heart's profile, click **Create room (Heart)**. Copy the displayed room
-   code, then click **Connect**.
-2. In Spade's profile, paste the room code, click **Join room (Spade)**, then
-   click **Connect**. **Connect alone does not claim the Spade seat.**
-3. Both profiles receive the same replay bootstrap and show the live board.
-4. Click an idle card to root it. Click an evicted card to select it, then
-   click an adjacent square or card support to intend. Click an intended card
-   to fulfil it. Use **End turn** and **Undo** for their respective deltas.
-
-The server broadcasts accepted deltas to both profiles. The browser replays
-them through `traffic-core`; automatic evictions and blocked batches are never
-sent as independent network commands.
-
-Heart must finish the entire turn with **End** before Spade can root `S1`.
-The board's `active` line identifies whose turn it is.
-
-## Re-entry modes
-
-Refreshing a connected profile performs **replay bootstrap**: the server sends
-`GameCreated` plus the complete ordered delta log. Future UI work will use
-**catch-up** for a connection drop when the browser still retains its local
-replica.
+Run instructions will be restored once the server and web rewrite exists. The
+old controls and support-target terminology are intentionally undocumented.

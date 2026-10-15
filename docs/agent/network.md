@@ -1,49 +1,50 @@
 # `traffic-network`
 
-`traffic-network` contains only serializable, transport-neutral messages shared
-by the server and browser. It depends on `traffic-core` for replay values, but
-does not contain WebSocket code, HTTP code, authentication, or game rules.
+`traffic-network` contains serializable transport-neutral messages shared by
+the server and browser. It depends on `traffic-core` for `GameDesign`,
+`MatchSnapshot`, and `ServerEvent`; it contains no game rules, sockets, HTTP,
+or authentication.
 
-## Canonical log
+## Sequenced server log
 
-The production server persistently owns one append-only sequence of `GameEvent`
-values per game. `GameCreated` is separate immutable setup data. Every accepted delta,
-including `Undo` and a delta that creates a blocked batch, becomes exactly one
-event. Derived evictions do not become network events because replay derives
-them deterministically.
-
-The local demo uses the same model in memory only; it intentionally loses rooms
-and logs when the process restarts.
-
-The replay values owned by `traffic-core` are:
+The authoritative server stores one append-only `Vec<ServerEvent>` per match.
+An event's zero-based index in that vector is its log sequence. Sequence
+numbers are network metadata, not core state and not fields of
+`MatchSnapshot`.
 
 ```rust
-pub struct GameSequence(u64); // opaque, monotonically increasing event number
-pub struct GameCreated { layout: Layout }
-pub struct GameEvent { sequence: GameSequence, delta: GameDelta }
+pub struct LogSequence(u64);
+
+pub struct SequencedEvent {
+    pub sequence: LogSequence,
+    pub event: ServerEvent,
+}
 ```
 
-`GameSequence::INITIAL` is zero and denotes the state immediately after
-`GameCreated`. Accepted events start at one and are contiguous. A submission
-includes the sequence the client has applied; the server rejects it when it is
-not current, preventing stale actions from being interpreted against a newer
-board.
+The server uses the vector position when persisting or reconstructing a match.
+`SequencedEvent` is used at the transport boundary, where a recipient must
+identify gaps, duplicates, and catch-up position.
 
-## Synchronization modes
+Each accepted `ServerEvent` is appended exactly once. Invalid commands are
+rejected and never enter the canonical log. `Undo` is logged even though its
+effect is to remove the final open-turn board action from the live snapshot.
+`EndTurn` is logged even though it is omitted from client review history.
 
-**Catch-up** is memory-preserving reconnection. The client retains a locally
-replayed game state and asks for the events after its highest contiguous
-`GameSequence`.
+## Synchronization
 
-**Replay bootstrap** is memoryless re-entry. An authenticated account may open
-the game with no local state; the server supplies `GameCreated` and the full
-ordered delta log. Delta sequences are implicit in the bootstrap list: the
-first delta is sequence one and every following delta increments it. The
-browser reconstructs state locally without a server snapshot.
+`SubmitEvent` includes the client's highest contiguous `LogSequence` and a
+prospective `ServerEvent`. The actor rejects a stale submission before rules
+validation. This prevents retried or concurrent actions from being evaluated
+against a newer board.
 
-## Submission
+**Catch-up** retains client memory. A client asks for events strictly after its
+known sequence and applies them in contiguous order.
 
-`SubmitDelta` includes the sequence the client had applied when it chose the
-delta. The server appends it only if that is its current sequence. A duplicate
-retry is then stale after the original was accepted, so it cannot append a
-second operation or create an accidental blocked batch.
+**Replay bootstrap** is memoryless re-entry. The server sends `GameDesign` and
+the complete ordered event log. The browser constructs its initial snapshot
+from the design, replays the log, then retains only its `ClientPlayer` data,
+`ClientMatch` review records, and live snapshots.
+
+No client-facing mutable-state snapshot is transmitted as an authority. A
+network wrapper may pair a received sequence with a `MatchSnapshot` for local
+bookkeeping, but the snapshot itself remains sequence-free.

@@ -1,55 +1,71 @@
-# Local history
+# Client-local history
 
-`HistoryCursor` is client-only presentation state. It does not replace the
-append-only `GameEvent` log described in [network.md](network.md).
+Client review history is not the append-only server log. It is a reversible
+view of surviving board actions, held beside a current authoritative snapshot.
+The client does not store `EndTurn` or `Undo` entries in either history
+collection.
 
-## Directional stacks
+```rust
+struct ClientMatch {
+    players: Vec<ClientPlayer>,
+    past: Vec<BackwardRecord>,
+    future: VecDeque<ForwardRecord>,
+    viewed: MatchSnapshot,
+    current: MatchSnapshot,
+}
 
-The cursor has a past stack and a future deque. Its position is implicit: the
-top of `past` is the current state and the front of `future` is the next state.
+enum ForwardRecord {
+    Intend(Adjacency),
+    Fulfil(Square),
+}
 
-```text
-left:  pop past, unapply it, push its forward form to the front of future
-right: pop front of future, apply it, push its inverse form to past
+enum BackwardRecord {
+    Intend(Square),
+    Fulfil(Adjacency),
+}
 ```
 
-Normal left/right operations are O(1). Gameplay is allowed only when `future`
-is empty. When an authoritative event arrives during review, `apply_event`
-first validates the complete canonical log transactionally, reconstructs its
-live tail, and restores the prior batch boundary; an invalid event leaves the
-cursor unchanged.
+`players` retains names, ordered identities, and special squares. Bootstrap
+uses the richer `GameDesign` once to construct the initial snapshot; the
+client need not retain initial piles or an independent square set afterward.
 
-## Direction-specific entries
+## Stepping
 
-Past entries contain only what reverse application needs:
+Use **step backward** and **step forward** for local review. Do not call these
+operations Undo: `Undo` is the distinct authoritative server event.
 
-```text
-Root(card)
-Eviction(card)
-Intention(card)
-Fulfilment { source, card }
-End
-```
+To step backward, pop from `past`, reverse it against `viewed`, and push its
+forward form to the front of `future`. To step forward, pop the front of
+`future`, apply it to `viewed`, and push its backward form to `past`.
 
-For `Intention(card)`, the current `CardStatus::Intended(target)` supplies the
-target while unapplying. For `Fulfilment { source, card }`, the card's current
-support is the target; reversal restores it to `source` with
-`Intended(target)` status.
+The entries intentionally contain only the data unavailable in the snapshot
+at the time that direction is applied:
 
-Future entries contain only what forward application needs:
+- Before reversing `BackwardRecord::Intend(source)`, the source is moving, so
+  its stored direction supplies the `Adjacency` required by the future entry.
+- `BackwardRecord::Fulfil(adjacency)` retains the source and target because a
+  fulfilled source is idling and no longer retains its direction.
+- Before forwarding `ForwardRecord::Fulfil(source)`, the source's moving
+  state supplies the adjacency required by the backward entry.
 
-```text
-Root(card)
-Eviction(card)
-Intention { card, target }
-Fulfilment(card)
-End
-```
+An adjacency always describes the original forward move from source to target.
+Reverse fulfilment physically moves the target's top card back to the source;
+it does not reverse the meaning of the stored adjacency.
 
-Automatic evictions appear in both directional forms. A batch is one player
-operation followed by zero or more evictions. Left and right arrow controls
-move a whole batch by applying or unapplying its entries one at a time;
-trailing evictions are visited before the player operation when moving left.
+## Inferred turn boundaries
 
-`Undo` is not a history entry. It is an accepted canonical `GameDelta` which
-removes the live final batch. The complete `GameEvent` log still records it.
+An `EndTurn` is omitted from local history. The client recognizes a turn
+boundary through the settled predicate: every square is idling and planted.
+When crossing a settled boundary backward, it restores the preceding player
+before reversing that turn's final fulfilment. When crossing it forward, the
+final fulfilment is followed by the inferred player advance and clearing of
+the active-card location.
+
+Reversing an intention clears the active-card location exactly when the
+resulting snapshot is settled. A subsequent intention cannot have that result,
+because its source was evicted before it was intended.
+
+The server's `Undo` is accepted only in an unended turn. Consequently the
+client need not restore an active-card location across a committed `EndTurn`.
+A future consensual take-back feature may reconstruct such a pre-end snapshot
+from the client records, but is outside this version.

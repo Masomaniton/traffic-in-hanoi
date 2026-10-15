@@ -1,42 +1,35 @@
 # Traffic in Hanoi: UI Interaction
 
-## 1. Mouse controls
+The browser submits only source-oriented board actions. It never names a card
+to move, calculates an eviction, or treats its local snapshot as authority.
 
-The live board uses direct clicks rather than command text fields.
+## Live controls
 
-- Click an idle card to attempt the turn's root eviction.
-- Click an evicted card to select it for an intention.
-- With an evicted card selected, click an empty square to target its base, or
-  click a card to target that card as support. The click submits an intention.
-- Click an intended card to fulfil its already-declared intention.
+- Select an idling non-empty source square and an orthogonal direction to
+  submit `Intend(Adjacency)`.
+- Select a moving source square to submit `Fulfil(source)`.
+- Submit `EndTurn` only as an attempt; the server determines whether the
+  current authoritative snapshot is settled.
+- Submit `Undo` only for the open current turn. Once the server has accepted
+  `EndTurn`, that turn is committed.
 
-Stacks fan horizontally from bottom to top, so the suit/rank corner and
-clickable area of every card remain visible. Heart cards use the heart styling,
-Spade cards use the spade styling, every square displays its coordinates, and a
-selected evicted card is visibly highlighted.
+The UI may preview the adjacency and derived target, but an authoritative
+server event is the only change to `current`.
 
-## 2. Dead ends
+## Status and accessibility
 
-Players may attempt actions that violate the declarative rules. The current
-batch then becomes blocked and the interface freezes it with a red-tinted
-explanation visible to both players. Show every violated predicate at the first
-invalid history position. Only Undo is available while blocked.
+Render piles bottom-to-top. Render moving direction and derived square status
+from the current/viewed snapshot. Empty squares are planted. The UI should
+make the current player, active-card location, settled status, and any server
+rejection understandable without relying only on colour.
 
-## 3. Keyboard controls
+## Local review
 
-Scope keyboard controls to the focused game board and prevent browser-default
-navigation where necessary.
+Use **step backward** and **step forward** for local history navigation. These
+controls affect `viewed`, never `current`, and do not send `Undo` to the
+server. The client may submit a gameplay event only while the viewed snapshot
+is current.
 
-| Key | Action |
-| --- | --- |
-| Backspace | Undo the final batch. |
-| Enter | Attempt `End`. |
-| Left / Right | Move one batch backward / forward in the read-only replay cursor. |
-
-The replay cursor never changes the live partial turn. The player may make a
-new operation only while viewing the current live history position. A batch is
-one player operation plus its zero or more following automatic evictions. Its
-implementation applies or unapplies the contained history entries in order and
-retains no board snapshot for each cursor position. When an authoritative event
-arrives during review, the cursor transactionally reconstructs the live tail
-from its canonical event log, then restores the reviewed batch boundary.
+When the user steps across a settled turn boundary, the client infers the
+omitted `EndTurn` transition as defined in [history.md](history.md). A future
+consensual take-back is not a local-review control.
