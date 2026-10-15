@@ -9,7 +9,8 @@
 - Redundant: "An active-player-owned card may be intended only when it is the active card".
 - When writing documents, I do not know how to make something plural but still signify that it is the same techical `term`.
 - Get feedback on naming conventions.
-- Proposing a take back
+- Allow proposing a take back.
+- 
 
 # Future directions:
 - The most abstract board shape design consists of two fully customizable types: `square` and `adjacency`. Each `adjacency` has a source and target `square`. This theoretical allows for one way connections. Every `square` has a `pile`.
