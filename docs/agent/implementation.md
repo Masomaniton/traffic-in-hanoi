@@ -76,12 +76,14 @@ reviewed snapshot. The `past` vector and `future` deque are local navigation
 state, not a second canonical log. Their compact, direction-specific records
 are specified in [history.md](history.md).
 
-The current web implementation has not yet added this review cursor. It
-retains the received ordered event vector beside its latest reconstructed
-snapshot. That bridge supports bootstrap and contiguous event validation, but
-it is not the final client storage model. The target board geometry, pile
-rendering, pointer interactions, and keyboard behavior are specified in
-[ui.md](ui.md).
+The current web implementation retains the received ordered event vector
+beside its latest reconstructed snapshot. Its first local-review cursor is a
+read-only prefix length in that vector: it derives `viewed` by replaying the
+selected prefix and disables gameplay until the cursor returns to the newest
+event. This preserves the authority boundary and provides keyboard review,
+but remains a bridge rather than the final compact `past`/`future` storage
+model described above. The target board geometry, pile rendering, pointer
+interactions, and keyboard behavior are specified in [ui.md](ui.md).
 
 ## 4. Networking and reconstruction
 
