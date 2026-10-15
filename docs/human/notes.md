@@ -10,7 +10,9 @@
 - When writing documents, I do not know how to make something plural but still signify that it is the same techical `term`.
 - Get feedback on naming conventions.
 - Allow proposing a take back.
-- 
+- Make it so that we do not need borders on everything via shadows or other sleek design options.
+- Show a preview of an intention when that intention is being made.
+- Add color and iconography to the cards.
 
 # Future directions:
 - The most abstract board shape design consists of two fully customizable types: `square` and `adjacency`. Each `adjacency` has a source and target `square`. This theoretical allows for one way connections. Every `square` has a `pile`.
