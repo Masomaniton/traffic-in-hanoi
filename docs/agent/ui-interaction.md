@@ -1,5 +1,11 @@
 # Traffic in Hanoi: UI Interaction
 
+This document specifies the target interaction and accessibility design. The
+current local demo is a transitional functional interface: it exposes
+coordinate-labelled piles and arrow buttons, and does not yet render the
+graphical square lattice, card stacks, or client-local review controls
+described below. See [local-demo.md](local-demo.md) for its current behavior.
+
 The browser submits only source-oriented board actions. It never names a card
 to move, calculates an eviction, or treats its local snapshot as authority.
 

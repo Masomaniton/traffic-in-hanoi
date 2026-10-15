@@ -2,8 +2,7 @@
 
 `traffic-network` contains serializable transport-neutral messages shared by
 the server and browser. It depends on `traffic-core` for `GameDesign`,
-`MatchSnapshot`, and `ServerEvent`; it contains no game rules, sockets, HTTP,
-or authentication.
+and `ServerEvent`; it contains no game rules, sockets, HTTP, or authentication.
 
 ## Sequenced server log
 

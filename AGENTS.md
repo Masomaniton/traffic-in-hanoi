@@ -54,6 +54,13 @@ bundle from `crates/traffic-server/static/`, which is generated and ignored.
 Use `cargo run -p traffic-server -- --trace-protocol` only for local protocol
 diagnostics; it must never log cookies or session identifiers.
 
+The browser interface is presently a functional transitional demo with
+coordinate-labelled piles and arrow controls. The target graphical lattice,
+rendered card stacks, automatic reconnect/catch-up, and client-local
+step-back/step-forward review are specified but not yet implemented. The
+browser currently requests a replay bootstrap on connection and retains the
+received event log to reconstruct its snapshot.
+
 ## Suggested dependencies
 
 - `traffic-core`: `serde`, `thiserror`. Do not add randomness unless a future game variant genuinely requires it; any such randomness must be explicitly seeded and preserved in game metadata.
