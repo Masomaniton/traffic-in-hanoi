@@ -34,16 +34,16 @@ Server (traffic-server, Axum + Tokio)
   ├─ PostgreSQL persistence
   └─ calls deterministic transitions
 Rules engine (traffic-core, pure Rust)
-  └─ GameCreated + ordered GameEvent replay -> GameState
+  └─ GameDesign + ordered ServerEvent replay -> MatchSnapshot
 ```
 
-Use authoritative server simulation. Clients may optimistically preview a delta, but only server-issued `GameEvent`s establish game state. Each submitted delta must include the client's known `GameSequence`; reject stale submissions rather than applying them to a newer board.
+Use authoritative server simulation. Clients may optimistically preview an event, but only server-issued `ServerEvent`s establish game state. Each submitted event must include the client's known network log sequence; reject stale submissions rather than applying them to a newer board. Sequence numbers belong to `traffic-network`, not `traffic-core` snapshots.
 
-Use a room/game actor (one Tokio task owning one in-memory game) rather than sharing mutable `GameState` behind locks. The actor serializes commands, validates the acting player and known sequence, applies `traffic-core`, persists one accepted `GameEvent`, then broadcasts it. This prevents turn races and keeps reconnect behavior understandable.
+Use a room/game actor (one Tokio task owning one in-memory match) rather than sharing mutable `MatchSnapshot` behind locks. The actor serializes commands, validates the acting player and known sequence, applies `traffic-core`, persists one accepted `ServerEvent`, then broadcasts it. This prevents turn races and keeps reconnect behavior understandable.
 
-Persist an append-only game event log. Traffic in Hanoi has public board information: broadcast root selections, intentions, fulfilments, end attempts, and Undo live to all participants. The shared rules engine records surviving reversible history entries (`Root`, `Intention`, `Fulfilment`, `End`, and derived `Eviction`); Undo removes the final operation/eviction run without becoming a local history entry. The network carries player deltas and ordered events; clients never submit evictions directly. Clients retain and replay the complete log. A future server-only checkpoint is optional optimization, never the canonical record or a required client payload.
+Persist an append-only `Vec<ServerEvent>` per game. Its zero-based vector index is its log sequence. Broadcast accepted `Intend`, `Fulfil`, `EndTurn`, and open-turn `Undo` events to all participants. The shared rules engine derives planted/evicted status; clients never submit or receive evictions as events. A future server-only checkpoint is optional optimization, never the canonical record or a required client payload.
 
-Treat an in-progress turn as a server-authoritative, reversible transaction. The server validates each appended history entry incrementally and derives eviction entries one at a time. A batch stops at its first invalid history position and is then blocked; no later operation is accepted until Undo removes that final batch. Do not treat the final turn submission as the sole rules-validation point. The precise mechanics are specified in `docs/agent/rules.md` and `docs/agent/implementation.md`.
+A `MatchSnapshot` contains only the current board, player, and positional active card. The room actor validates each prospective event against its authoritative current snapshot before appending it. Invalid events do not mutate state or enter the log. `Undo` is limited to the unended current turn; `EndTurn` commits that turn. A consensual cross-turn take-back is a future, distinct feature. The precise mechanics are specified in `docs/agent/rules.md` and `docs/agent/implementation.md`.
 
 ## Current local demo
 
@@ -65,9 +65,9 @@ Pin compatible versions in the workspace `Cargo.toml`. Prefer server-rendered st
 
 ## Domain modeling rules
 
-- Make illegal game states unrepresentable with enums and small newtypes (`PlayerId`, `CardId`, `RoomCode`, `GameSequence`).
-- Model `GameDelta` as a tagged enum and make replay deterministic and side-effect free.
-- Keep `GameState` opaque. Reconstruct it from `GameCreated` plus ordered `GameEvent`s; do not transmit mutable state as a client-authoritative snapshot.
+- Make illegal game states unrepresentable with enums and small newtypes (`PlayerId`, `Rank`, `PileHeight`, `RoomCode`, `LogSequence`).
+- Model `ServerEvent` as a tagged enum and make replay deterministic and side-effect free.
+- Keep `MatchSnapshot` opaque. Reconstruct it from `GameDesign` plus ordered `ServerEvent`s; do not transmit mutable state as a client-authoritative snapshot.
 - Every rules addition requires table-driven unit tests in `traffic-core`; test invalid actions as carefully as valid ones.
 - Never trust client-provided player identity, board state, turn status, intent legality, score, or game result.
 
@@ -78,20 +78,20 @@ Keep HTTP for identity, room discovery/creation, static assets, health checks, a
 Use a typed protocol based on `traffic-network`:
 
 ```text
-SubmitDelta { known_sequence, delta }
+SubmitEvent { known_through, event }
 CatchUpAfter { sequence }
 RequestReplayBootstrap
 
-GameEvent { sequence, delta }
-ReplayBootstrap { created, deltas }
+SequencedEvent { sequence, event }
+ReplayBootstrap { design, events }
 ```
 
-Commands cover live turn actions (root, intention, fulfilment, undo, and end). A stale duplicate is rejected because its `known_sequence` is no longer current. **Catch-up** means a memory-preserving reconnection that requests events after a retained sequence. **Replay bootstrap** means a memoryless authenticated re-entry that receives `GameCreated` and the complete log. Do not use client-facing game snapshots.
+Commands cover live turn actions (intend, fulfil, end turn, and undo). A stale duplicate is rejected because its `known_through` is no longer current. **Catch-up** means a memory-preserving reconnection that requests events after a retained sequence. **Replay bootstrap** means a memoryless authenticated re-entry that receives `GameDesign` and the complete log. Do not use client-facing game snapshots.
 
 ## Data and operations
 
 - PostgreSQL is the source of truth for users, rooms, immutable game metadata, and ordered event logs.
-- Treat in-memory room actors as a cache of active games. A server restart must recover games by replaying `GameCreated` and persisted events.
+- Treat in-memory room actors as a cache of active games. A server restart must recover games by replaying `GameDesign` and persisted events.
 - Keep migrations in the repository and test them against an ephemeral PostgreSQL instance in CI.
 - Provide structured logs with request/game/room/player correlation IDs. Never log authentication tokens or raw session cookies.
 - Add rate limits for login, room creation, and WebSocket commands; impose message-size and connection limits.
@@ -106,12 +106,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-For rules changes, include regression tests proving determinism and validating every intermediate history position. For protocol changes, test catch-up, replay bootstrap, stale duplicate commands, missing/out-of-order events, blocked batches, Undo, automatic effects, and unauthorized commands.
+For rules changes, include table-driven regression tests proving determinism, every action predicate, pile legality, derived eviction, settled-turn boundaries, and open-turn Undo. For protocol changes, test catch-up, replay bootstrap, stale duplicate commands, missing/out-of-order events, Undo, committed turns, and unauthorized commands.
 
 ## Working conventions
 
 - Keep pull requests small and avoid mixing formatting, dependency upgrades, and behavior changes.
 - Do not add rule logic to `traffic-server` or `traffic-web`.
-- Preserve the declarative rules in the client. The UI may accept an attempted operation that violates them, but must immediately create a visible blocked batch rather than silently adding gameplay guardrails or allowing later operations.
+- Preserve the declarative rules in the client. The UI may preview an attempted operation, but only the authoritative server accepts an event; rejected events must leave the local authoritative snapshot unchanged and visibly explain the rejection.
 - Prefer explicit error types over stringly errors and avoid `unwrap`/`expect` outside tests or truly impossible invariant boundaries.
 - Explain any database schema, protocol, or dependency decision in a short architecture record under `docs/adr/` once the project has those directories.
