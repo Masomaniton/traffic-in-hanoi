@@ -65,7 +65,7 @@ prospective core event to `current`. On success, it appends that event to
 `log`, persists it, and broadcasts it. `current` is required for legal-move
 validation and must never be supplied by a client.
 
-The browser owns:
+The planned browser review model is:
 
 ```text
 ClientMatch { players, past, future, viewed, current }
@@ -75,6 +75,11 @@ ClientMatch { players, past, future, viewed, current }
 reviewed snapshot. The `past` vector and `future` deque are local navigation
 state, not a second canonical log. Their compact, direction-specific records
 are specified in [history.md](history.md).
+
+The current web implementation has not yet added this review cursor. It
+retains the received ordered event vector beside its latest reconstructed
+snapshot. That bridge supports bootstrap and contiguous event validation, but
+it is not the final client storage model.
 
 ## 4. Networking and reconstruction
 

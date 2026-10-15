@@ -3,18 +3,24 @@
 `traffic-cli` is a local pile-rules harness. One terminal user controls every
 configured player; it has no networking, persistence, or authority role.
 
-The current checked-in CLI still targets the retired support-based rules and
-will be replaced with the core rewrite. Its redesigned command surface should
-mirror the replayable core events:
+Run it with:
+
+```sh
+cargo run -p traffic-cli
+```
+
+It starts the standard two-player design. Commands are:
 
 ```text
-intend <source-column> <source-row> <direction>
-fulfil <source-column> <source-row>
+intend <column> <row> <up|down|left|right>
+fulfil <column> <row>
 end-turn
 undo
 show
+help
+quit
 ```
 
-It should also support creation of the standard design and inspection of the
-derived pile, moving-state, planted/evicted-status, current-player, and
-active-card data. It must not expose card-support, root, or eviction commands.
+`show` prints each pile, stored square state, active card, settled predicate,
+and derived winner. The CLI intentionally exposes no root, support, or
+eviction commands.

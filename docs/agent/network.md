@@ -41,9 +41,9 @@ against a newer board.
 known sequence and applies them in contiguous order.
 
 **Replay bootstrap** is memoryless re-entry. The server sends `GameDesign` and
-the complete ordered event log. The browser constructs its initial snapshot
-from the design, replays the log, then retains only its `ClientPlayer` data,
-`ClientMatch` review records, and live snapshots.
+the complete ordered event log. The current browser constructs its initial
+snapshot from the design and retains that received log for reconstruction.
+The planned client review model is specified in [history.md](history.md).
 
 No client-facing mutable-state snapshot is transmitted as an authority. A
 network wrapper may pair a received sequence with a `MatchSnapshot` for local
