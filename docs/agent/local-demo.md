@@ -42,15 +42,21 @@ cookie sessions.
 1. In the first profile, select **Create room** and copy the displayed code.
 2. In the second profile, enter that code and select **Join room**.
 3. In each profile, enter the code and select **Connect**.
-4. Use an arrow beside a source square to submit an Intend; use **Fulfil** on a
-   moving square; use **End turn** only after the board is settled. **Undo**
-   reverses the last action of the current unended turn.
+4. Click a non-empty idling source square, then an orthogonally adjacent target
+   square, to submit an Intend. Click a moving square to submit its Fulfil.
+   Use **End turn** only after the board is settled. **Undo** reverses the last
+   action of the current unended turn.
+5. Press and hold a non-empty pile to fan it out; the next click dismisses the
+   fan without taking a board action. Left/right arrows review one logged
+   event; up/down arrows review turn boundaries. Gameplay is disabled while
+   reviewing an earlier position.
 
 The server validates the acting player, known log sequence, and rules against
 its authoritative snapshot before broadcasting any event. Invalid commands
 show a rejection and do not change the shared state.
 
 The browser currently requests a replay bootstrap on connection and retains
-the received event log to rebuild its local snapshot. The protocol supports
-catch-up, but automatic reconnect/catch-up and client-local review controls
-remain follow-up work.
+the received event log to rebuild its local snapshot. It provides read-only
+local review by replaying a selected log prefix. The protocol supports
+catch-up, but automatic reconnect/catch-up and the planned compact local
+history representation remain follow-up work.

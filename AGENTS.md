@@ -54,12 +54,14 @@ bundle from `crates/traffic-server/static/`, which is generated and ignored.
 Use `cargo run -p traffic-server -- --trace-protocol` only for local protocol
 diagnostics; it must never log cookies or session identifiers.
 
-The browser interface is presently a functional transitional demo with
-coordinate-labelled piles and arrow controls. The target graphical lattice,
-rendered card stacks, automatic reconnect/catch-up, and client-local
-step-back/step-forward review are specified but not yet implemented. The
-browser currently requests a replay bootstrap on connection and retains the
-received event log to reconstruct its snapshot.
+The browser interface renders a graphical coordinate-driven lattice, compact
+card stacks, inspectable fanned piles, and pointer controls for intentions and
+fulfilments. It also supports keyboard turn commands and read-only local
+step-back/step-forward review using a replay-prefix cursor. The browser
+currently requests a replay bootstrap on connection and retains the received
+event log to reconstruct its snapshot. Automatic reconnect/catch-up and the
+planned compact client `past`/`future` history representation remain follow-up
+work.
 
 ## Suggested dependencies
 

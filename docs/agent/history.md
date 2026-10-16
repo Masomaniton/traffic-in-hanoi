@@ -1,8 +1,8 @@
 # Planned client-local history
 
 This is the approved replacement for the browser's temporary retained-log
-replica. It is not implemented yet; see `implementation.md` for the current
-bridge behavior.
+replica. It is not implemented yet; see [implementation.md](implementation.md)
+for the current replay-prefix bridge behavior.
 
 Client review history is not the append-only server log. It is a reversible
 view of surviving board actions, held beside a current authoritative snapshot.

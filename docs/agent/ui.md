@@ -1,11 +1,11 @@
 # Traffic in Hanoi: UI
 
-This document specifies the target graphical board and its interaction model.
-It refines the human-facing [UI note](../human/ui.md) for implementation. The
-current local demo is transitional: it exposes coordinate-labelled piles and
-arrow buttons, and does not yet render the lattice, card stacks, pile fan, or
-client-local review controls specified here. See [local-demo.md](local-demo.md)
-for its current behavior.
+This document specifies the graphical board and its interaction model. It
+refines the human-facing [UI note](../human/ui.md) for implementation. The
+current local demo implements the lattice, compact card stacks, pile fan,
+pointer actions, and preliminary local review described here. It remains an
+in-memory demo and lacks automatic reconnect/catch-up; see
+[local-demo.md](local-demo.md) for its current behavior.
 
 The browser submits source-oriented board actions only. It never names a card
 to move, calculates eviction, or treats its local snapshot as authoritative.
