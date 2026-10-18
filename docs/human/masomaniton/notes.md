@@ -1,5 +1,5 @@
-# The List:
-- Should we allow start and finish on the same square?
+# To consider:
+- Allow start and finish on the same square.
 - Disallow selecting active card once background is red.
 - Make sure we do not use a Vec of Batch or Turn.
 - ReplayBootstrap probably does not need sequence numbers.
