@@ -11,4 +11,4 @@ All code is in the `crates` directory. Within the `docs` directory, there is `ag
 The following invariants must hold at every commit:
 - There are no contradictory specifications inside the `human` directory.
 - Every specification in the `human` directory appears as a currently in place or planned addition in `agent` under `fulfilled` or `intended`, respectively.
-- The `agent` directory contains a complete and up-to-date description of the entire codebase
+- The `agent` directory contains a complete and up-to-date description of the entire codebase.
