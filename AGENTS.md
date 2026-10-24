@@ -6,11 +6,29 @@ Build a browser-playable, real-time implementation of **Traffic in Hanoi**. Play
 
 The application is a **100% Rust stack**: Rust on the server and Rust compiled to WebAssembly in the browser. Do not introduce JavaScript or TypeScript application code. Small declarative JavaScript-free HTML and CSS assets are fine.
 
-## Documentation ownership
+## Documentation workflow
 
-`docs/human/` contains human-authored notes. `docs/agent/` contains the
-technical specifications and implementation documentation maintained during
-agent work. Keep the authorship distinction out of the documents themselves.
+`README.md` defines the documentation workflow. It is human-written;
+`AGENTS.md` is generated and must stay aligned with that workflow.
+
+- `docs/human/<writer>/` contains human-authored specifications that agents
+  are expected to follow. These specifications may describe planned behavior
+  rather than the current code. Do not leave contradictory specifications in
+  this tree.
+- `docs/agent/intended/` contains documentation for planned features and
+  fixes. Every human specification must be represented either here or in
+  `docs/agent/fulfilled/`, according to whether it is planned or implemented.
+- `docs/agent/fulfilled/` describes the current codebase. Keep it complete and
+  up to date; implementation details may be omitted.
+- `docs/notes/` is for non-specification material and is outside these
+  documentation invariants. If a note becomes a requirement, move it into the
+  appropriate `docs/human/<writer>/` location.
+
+When an intended change is completed, remove its plan and update the relevant
+fulfilled documentation as part of the same change. At every commit, the human
+specifications must be non-contradictory, each must appear as current or
+planned in the agent documentation, and fulfilled documentation must describe
+the current codebase.
 
 ## Workspace ownership
 
@@ -43,13 +61,13 @@ Use a room/game actor (one Tokio task owning one in-memory match) rather than sh
 
 Persist an append-only `Vec<ServerEvent>` per game. Its zero-based vector index is its log sequence. Broadcast accepted `Intend`, `Fulfil`, `EndTurn`, and open-turn `Undo` events to all participants. The shared rules engine derives planted/evicted status; clients never submit or receive evictions as events. A future server-only checkpoint is optional optimization, never the canonical record or a required client payload.
 
-A `MatchSnapshot` contains only the current board, player, and positional active card. The room actor validates each prospective event against its authoritative current snapshot before appending it. Invalid events do not mutate state or enter the log. `Undo` is limited to the unended current turn; `EndTurn` commits that turn. A consensual cross-turn take-back is a future, distinct feature. The precise mechanics are specified in `docs/agent/rules.md` and `docs/agent/implementation.md`.
+A `MatchSnapshot` contains only the current board, player, and positional active card. The room actor validates each prospective event against its authoritative current snapshot before appending it. Invalid events do not mutate state or enter the log. `Undo` is limited to the unended current turn; `EndTurn` commits that turn. A consensual cross-turn take-back is a future, distinct feature. The precise mechanics are specified in `docs/agent/fulfilled/rules.md` and `docs/agent/fulfilled/implementation.md`.
 
 ## Current local demo
 
 The local demo is intentionally in-memory: it creates private two-seat rooms,
 uses separate anonymous cookie sessions, and loses all rooms on server restart.
-Run instructions are in `docs/agent/local-demo.md`. It serves a Trunk-built WASM
+Run instructions are in `docs/agent/fulfilled/local-demo.md`. It serves a Trunk-built WASM
 bundle from `crates/traffic-server/static/`, which is generated and ignored.
 Use `cargo run -p traffic-server -- --trace-protocol` only for local protocol
 diagnostics; it must never log cookies or session identifiers.
@@ -123,4 +141,5 @@ For rules changes, include table-driven regression tests proving determinism, ev
 - Do not add rule logic to `traffic-server` or `traffic-web`.
 - Preserve the declarative rules in the client. The UI may preview an attempted operation, but only the authoritative server accepts an event; rejected events must leave the local authoritative snapshot unchanged and visibly explain the rejection.
 - Prefer explicit error types over stringly errors and avoid `unwrap`/`expect` outside tests or truly impossible invariant boundaries.
+- Every public function must have appropriate `rustdoc` comments.
 - Explain any database schema, protocol, or dependency decision in a short architecture record under `docs/adr/` once the project has those directories.
